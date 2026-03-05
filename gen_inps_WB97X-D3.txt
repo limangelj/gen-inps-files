@@ -1,0 +1,83 @@
+#!/usr/bin/env python3
+
+from pathlib import Path
+import argparse
+import sys
+import os
+
+OPT_TEMPLATE = """\
+! wb97x-d3 def2-tzvp AutoAux cpcm(solvent) tightscf opt 
+%maxcore 1000
+%pal nprocs 1 end
+* xyzfile {charge} {mult} {xyz}
+"""
+
+FREQ_TEMPLATE = """\
+! wb97x-d3 def2-tzvp AutoAux cpcm(solvent) tightscf freq
+%maxcore 1000
+%pal nprocs 1 end
+* xyzfile {charge} {mult} {xyz}
+"""
+
+TDDFT_TEMPLATE = """\
+! wb97x-d3 def2-tzvp AutoAux cpcm(solvent)
+%maxcore 1000
+%pal nprocs 1 end
+%tddft
+    nroots 6
+    tda false
+    triplets true
+end
+* xyzfile {charge} {mult} {xyz}
+"""
+
+RUN_TEMPLATE = """\
+#!/bin/bash
+opt_jid=$(qorca -i ./{opt_file} -c {cores} -m 2500 -d 1000)
+jid=$(qorca -i ./{freq_file} -c {cores} -m 2500 -d 1000 -n 1 -j ${{opt_jid}})
+jid=$(qorca -i ./{tddft_file} -c {cores} -m 2500 -d 1000 -n 1 -j ${{opt_jid}})
+"""
+
+def main():
+    parser = argparse.ArgumentParser(description="Generate ORCA inputs + run script")
+    parser.add_argument("name", help="Input file name")
+    parser.add_argument("xyz", help="Input .xyz file")
+    parser.add_argument("charge", help="Molecule net charge", type=int)
+    parser.add_argument("-c", "--cores", type=int, default=16)
+    args = parser.parse_args()
+
+    xyz_path = Path(args.xyz)
+
+    if not xyz_path.exists():
+        print(f"Error: {xyz_path} not found.")
+        sys.exit(1)
+
+    if xyz_path.suffix != ".xyz":
+        print("Error: input must be .xyz")
+        sys.exit(1)
+
+    stem = args.name
+    mult = 1
+
+    opt_stem = f"{stem}_wb9_def2-tzvp_opt"
+    opt_file = Path(opt_stem + ".inp")
+    opt_xyz_file = Path(opt_stem + ".xyz")
+    freq_file = Path(f"{stem}_wb9_def2-tzvp_freq.inp")
+    tddft_file = Path(f"{stem}_wb9_def2-tzvp_tddft.inp")
+    run_file = Path(f"run_{stem}_wb9.sh")
+
+    opt_file.write_text(OPT_TEMPLATE.format(charge=args.charge, mult=mult, xyz=xyz_path.name))
+    freq_file.write_text(FREQ_TEMPLATE.format(charge=args.charge, mult=mult, xyz=opt_xyz_file))
+    tddft_file.write_text(TDDFT_TEMPLATE.format(charge=args.charge, mult=mult, xyz=opt_xyz_file))
+    run_file.write_text(RUN_TEMPLATE.format(
+        opt_file=opt_file,
+        freq_file=freq_file,
+        tddft_file=tddft_file,
+        cores=args.cores
+    ))
+
+    # Make run.sh executable
+    os.chmod(run_file, 0o755)
+
+if __name__ == "__main__":
+    main()
