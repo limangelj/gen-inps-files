@@ -1,0 +1,99 @@
+#!/usr/bin/env python3
+
+from pathlib import Path
+import argparse
+import sys
+import os
+
+OPT_TEMPLATE = """\
+! B3LYP def2-TZVP def2/J RIJCOSX D3BJ TightSCF opt CPCM(solvent) 
+%maxcore 1000
+%pal nprocs 1 end
+* xyzfile {charge} {mult} {xyz}
+"""
+
+FREQ_TEMPLATE = """\
+! B3LYP def2-TZVP def2/J RIJCOSX D3BJ TightSCF freq CPCM(solvent) 
+%maxcore 1000
+%pal nprocs 1 end
+* xyzfile {charge} {mult} {xyz}
+"""
+
+CCSD_TEMPLATE = """\
+! DLPNO-STEOM-CCSD def2-TZVP def2-TZVP/C RIJCOSX TightSCF
+%maxcore 1000
+%pal nprocs 1 end
+
+%cpcm
+  solvent "solvent"
+end
+
+%mdci
+  NRoots 1
+  NActIP 8
+  NActEA 6
+  DoCISNat false
+  DoRootWise false
+  OThresh 0.005
+  VThresh 0.005
+  TCutPNOSingles 1e-11
+  NDAV 400
+  MaxIter 300
+  DTol 1e-5
+  DoSimpleDens false
+  AddL2Term true
+end
+
+* xyzfile {charge} {mult} {xyz}
+"""
+
+RUN_TEMPLATE = """\
+#!/bin/bash
+opt_jid=$(qorca -i ./{opt_file} -c {cores})
+jid=$(qorca -i ./{freq_file} -c {cores} -n 1 -j ${{opt_jid}})
+jid=$(qorca -i ./{ccsd_file} -c {cores} -m 8000 -d 6000 -n 1 -j ${{opt_jid}})
+"""
+
+def main():
+    parser = argparse.ArgumentParser(description="Generate ORCA inputs + run script")
+    parser.add_argument("name", help="Input file name")
+    parser.add_argument("xyz", help="Input .xyz file")
+    parser.add_argument("charge", help="Molecule net charge", type=int)
+    parser.add_argument("-c", "--cores", type=int, default=16)
+    args = parser.parse_args()
+
+    xyz_path = Path(args.xyz)
+
+    if not xyz_path.exists():
+        print(f"Error: {xyz_path} not found.")
+        sys.exit(1)
+
+    if xyz_path.suffix != ".xyz":
+        print("Error: input must be .xyz")
+        sys.exit(1)
+
+    stem = args.name
+    mult = 1
+
+    opt_stem = f"{stem}_b3lyp_def2-tzvp_opt"
+    opt_file = Path(opt_stem + ".inp")
+    opt_xyz_file = Path(opt_stem + ".xyz")
+    freq_file = Path(f"{stem}_b3lyp_def2-tzvp_freq.inp")
+    ccsd_file = Path(f"{stem}_steom-dlpno-ccsd_def2-tzvp.inp")
+    run_file = Path(f"run_{stem}_ccsd.sh")
+
+    opt_file.write_text(OPT_TEMPLATE.format(charge=args.charge, mult=mult, xyz=xyz_path.name))
+    freq_file.write_text(FREQ_TEMPLATE.format(charge=args.charge, mult=mult, xyz=opt_xyz_file))
+    ccsd_file.write_text(CCSD_TEMPLATE.format(charge=args.charge, mult=mult, xyz=opt_xyz_file))
+    run_file.write_text(RUN_TEMPLATE.format(
+        opt_file=opt_file,
+        freq_file=freq_file,
+        ccsd_file=ccsd_file,
+        cores=args.cores
+    ))
+
+    # Make run.sh executable
+    os.chmod(run_file, 0o755)
+
+if __name__ == "__main__":
+    main()
