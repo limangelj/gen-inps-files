@@ -1,0 +1,78 @@
+#!/usr/bin/env python3
+
+from pathlib import Path
+import argparse
+import sys
+import os
+
+
+OPT_TEMPLATE = """\
+! r2SCAN-3c CPCM(solvent) TightOpt FREQ
+%maxcore 5000
+%pal nprocs {cores} end
+%geom
+    MaxIter 500
+end
+* xyzfile {charge} {mult} {xyz}
+"""
+
+TDDFT_TEMPLATE = """\
+! RI-SOS-WB88PP86 def2-TZVP def2-TZVP/C cpcm(solvent)
+%maxcore 5000
+%pal nprocs {cores} end
+%tddft
+    nroots 3
+    tda false
+    triplets true
+end
+* xyzfile {charge} {mult} {xyz}
+"""
+
+# UPDATED RUN SCRIPT: Chaining the steps correctly
+RUN_TEMPLATE = """\
+#!/bin/bash
+# 2. Opt 
+opt_jid=$(qorca -i ./{opt_file} -c {cores} -m 3000 -d 1000 -n 0)
+# 4. TDDFT (Depends on Opt)
+tddft_jid=$(qorca -i ./{tddft_file} -c {cores} -m 4000 -d 5000 -n 1 -j ${{opt_jid}})
+"""
+
+def main():
+    parser = argparse.ArgumentParser(description="Generate ORCA Solvator -> Opt -> Freq -> TD-DFT workflow")
+    parser.add_argument("name", help="Base name for the project")
+    parser.add_argument("xyz", help="Input .xyz file")
+    parser.add_argument("charge", help="Molecule net charge", type=int)
+    parser.add_argument("-c", "--cores", type=int, default=16)
+    args = parser.parse_args()
+
+    xyz_path = Path(args.xyz)
+    if not xyz_path.exists():
+        print(f"Error: {xyz_path} not found."); sys.exit(1)
+
+    stem = args.name
+    mult = 1  
+
+    
+    opt_file     = Path(f"{stem}_r2scan_opt.inp")
+    opt_out_xyz  = Path(f"{stem}_r2scan_opt.xyz")      # Output from Opt
+    
+    tddft_file   = Path(f"{stem}_risos_def2_tddft.inp")
+    
+    run_file     = Path(f"run_{stem}_risos.sh")
+
+    # Write inputs with correct coordinate references
+    opt_file.write_text(OPT_TEMPLATE.format(charge=args.charge, mult=mult, xyz=xyz_path.name, cores=args.cores))
+    tddft_file.write_text(TDDFT_TEMPLATE.format(charge=args.charge, mult=mult, xyz=opt_out_xyz.name, cores=args.cores))
+
+    # Write the master bash script
+    run_file.write_text(RUN_TEMPLATE.format(
+        opt_file=opt_file,
+        tddft_file=tddft_file,
+        cores=args.cores
+    ))
+
+    os.chmod(run_file, 0o755)
+    print(f"Workflow generated! Run it with: ./{run_file}")
+
+if __name__ == "__main__":
+    main()
