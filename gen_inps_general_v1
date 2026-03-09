@@ -181,7 +181,7 @@ def main():
 
     print("\nDone! Workflow summary:")
     print(f"  Submit: {run_file}")
-    print(f"  Chain:  opt → freq + CAM-B3LYP + wB97X-D3 (parallel) → DLPNO")
+    print(f"  Chain:  opt → freq + CAM-B3LYP + wB97X-D3 (parallel) → DLPNO-STEOM")
 
 
 if __name__ == "__main__":
