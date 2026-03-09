@@ -1,0 +1,44 @@
+#!/usr/bin/env python3
+import sys
+
+def extract_energy(filename):
+    energy = None
+    try:
+        with open(filename, 'r') as f:
+            for line in f:
+                if 'FINAL SINGLE POINT ENERGY' in line:
+                    energy = float(line.split()[-1])
+    except FileNotFoundError:
+        print(f'Error: {filename} not found')
+        return None
+    if energy is None:
+        print(f'Error: no energy found in {filename} - job may have failed or check if correct .out file')
+    return energy
+
+def hartree_to_ev(hartree):
+    return hartree * 27.2114
+
+def calculate_t1(s0_file, t1_file):
+    s0_energy = extract_energy(s0_file)
+    t1_energy = extract_energy(t1_file)
+
+    if s0_energy is None or t1_energy is None:
+        print('Cannot calculate T1 energy - missing data')
+        return
+
+    delta_hartree = t1_energy - s0_energy
+    delta_ev = hartree_to_ev(delta_hartree)
+
+    print(f'S0 FSPE  = {s0_energy:.6f} Ha')
+    print(f'T1 FSPE  = {t1_energy:.6f} Ha')
+    print(f'Adiabatic T1 = {delta_hartree:.6f} Ha')
+    print(f'Adiabatic T1 = {delta_ev:.3f} eV')
+
+if len(sys.argv) != 3:
+    print('To run: ./extract_t1_via_SPE <s0_output_file> <t1_output_file>')
+    sys.exit(1)
+
+s0_file = sys.argv[1]
+t1_file = sys.argv[2]
+
+calculate_t1(s0_file, t1_file)
