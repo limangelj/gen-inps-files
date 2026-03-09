@@ -6,28 +6,28 @@ import sys
 import os
 
 S0_OPT_TEMPLATE = """\
-! B3LYP D3BJ cc-pVTZ TightOpt FREQ CPCM(solvent)
+! B3LYP D3BJ cc-pVTZ TightOpt FREQ CPCM({solvent})
 %maxcore 1000
 %pal nprocs 16 end
 * xyzfile {charge} {mult} {xyz}
 """
 
 T1_OPT_TEMPLATE = """\
-! B3LYP D3BJ cc-pVTZ TightOpt FREQ CPCM(solvent)
+! B3LYP D3BJ cc-pVTZ TightOpt FREQ CPCM({solvent})
 %maxcore 1000
 %pal nprocs 16 end
 * xyzfile {charge} {mult} {xyz}
 """
 
 CCSD_S0GEOM_TEMPLATE = """\
-! DLPNO-CCSD(T) cc-pVDZ cc-pVDZ/C AutoAux NormalPNO TightSCF CPCM(solvent)
+! DLPNO-CCSD(T) cc-pVDZ cc-pVDZ/C AutoAux NormalPNO TightSCF CPCM({solvent})
 %maxcore 7125
 %pal nprocs 8 end
 * xyzfile {charge} {mult} {xyz}
 """
 
 CCSD_T1GEOM_TEMPLATE = """\
-! UHF DLPNO-CCSD(T) cc-pVDZ cc-pVDZ/C AutoAux NormalPNO TightSCF CPCM(solvent)
+! UHF DLPNO-CCSD(T) cc-pVDZ cc-pVDZ/C AutoAux NormalPNO TightSCF CPCM({solvent})
 %maxcore 7125
 %pal nprocs 8 end
 * xyzfile {charge} {mult} {xyz}
@@ -47,6 +47,8 @@ def main():
     parser.add_argument("xyz", help="Input .xyz file")
     parser.add_argument("charge", help="Molecule net charge", type=int)
     parser.add_argument("-c", "--cores", type=int, default=16)
+    parser.add_argument("-s", "--solvent", default="water",
+                        help="Solvent name for CPCM (e.g. water, acetonitrile, dichloromethane)")
     args = parser.parse_args()
 
     xyz_path = Path(args.xyz)
