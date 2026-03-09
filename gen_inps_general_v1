@@ -1,61 +1,61 @@
 #!/usr/bin/env python3
-
 from pathlib import Path
 import argparse
 import sys
 import os
 
 B3LYP_OPT_TEMPLATE = """\
-! B3LYP def2-TZVP def2/J RIJCOSX D3BJ TightSCF TightOpt CPCM(solvent) 
-%maxcore 1000
-%pal nprocs 1 end
+! B3LYP def2-TZVP def2/J RIJCOSX D3BJ TightSCF TightOpt DefGrid2 CPCM({solvent})
+%maxcore {maxcore}
+%pal nprocs {nprocs} end
+%geom
+  MaxIter 500
+end
 * xyzfile {charge} {mult} {xyz}
 """
 
 B3LYP_FREQ_TEMPLATE = """\
-! B3LYP def2-TZVP def2/J RIJCOSX D3BJ TightSCF AnFreq CPCM(solvent)
-%maxcore 1000
-%pal nprocs 16 end
+! B3LYP def2-TZVP def2/J RIJCOSX D3BJ TightSCF AnFreq DefGrid2 CPCM({solvent})
+%maxcore {maxcore}
+%pal nprocs {nprocs} end
 * xyzfile {charge} {mult} {xyz}
 """
 
-CAM-B3LYP_TDDFT_TEMPLATE = """\
-! CAM-B3LYP def2-TZVP def2/J RIJCOSX TightSCF CPCM(solvent)
-%maxcore 4000
-%pal nprocs 8 end
+CAM_B3LYP_TDDFT_TEMPLATE = """\
+! CAM-B3LYP def2-TZVP def2/J RIJCOSX TightSCF DefGrid2 CPCM({solvent})
+%maxcore {maxcore}
+%pal nprocs {nprocs} end
 %tddft
-  nroots 5
+  nroots 6
   tda false
-  triplets true
+  triplets false
   maxdim 5
 end
 * xyzfile {charge} {mult} {xyz}
 """
 
-WB97X-D3_TDDFT_TEMPLATE = """\
-! wB97X-D3 def2-TZVP def2/J RIJCOSX TightSCF CPCM(solvent)
-%maxcore 4000
-%pal nprocs 8 end
+WB97XD3_TDDFT_TEMPLATE = """\
+! wB97X-D3 def2-TZVP def2/J RIJCOSX TightSCF DefGrid2 CPCM({solvent})
+%maxcore {maxcore}
+%pal nprocs {nprocs} end
 %tddft
-  nroots 5
-  tda false        # strongly recommended with triplets + range-separated hybrid
-  triplets true  # set true only if needed, and use tda true if so
+  nroots 6
+  tda true
+  triplets false
   maxdim 5
 end
 * xyzfile {charge} {mult} {xyz}
 """
 
-DLPNO-STEOM-CCSD_TEMPLATE = """\
+DLPNO_STEOM_CCSD_TEMPLATE = """\
 ! DLPNO-STEOM-CCSD def2-TZVP def2-TZVP/C RIJCOSX TightSCF
-%maxcore 1000
-%pal nprocs 1 end
-
+%maxcore {maxcore}
+%pal nprocs {nprocs} end
 %cpcm
-  solvent "solvent"
+  solvent "{solvent}"
 end
-
 %mdci
-  NRoots 1
+  NRoots 5
   NActIP 8
   NActEA 6
   DoCISNat false
@@ -74,60 +74,128 @@ end
 
 RUN_OPT_FREQ_TDDFT_TEMPLATE = """\
 #!/bin/bash
-opt_jid=$(qorca -i ./{opt_file} -c {cores} -m 2500)
-jid=$(qorca -i ./{freq_file} -c {cores} -m 2500 -n 1 -j ${{opt_jid}})
-cam-b3lyp_jid=$(qorca -i ./{cam-b3lyp_tddft_file} -c {cores} -m 2500 -j ${{opt_jid}})
-wb97x-d3_jid=$(qorca -i ./{wb97x-d3_tddft_file} -c {cores} -m 2500 -j ${{opt_jid}})
+opt_jid=$(qorca -i ./{opt_file} -c {cores} -m {mem})
+freq_jid=$(qorca -i ./{freq_file} -c {cores} -m {mem} -n 1 -j ${{opt_jid}})
+cam_jid=$(qorca -i ./{cam_tddft_file} -c {cores} -m {mem} -n 1 -j ${{opt_jid}})
+wb97_jid=$(qorca -i ./{wb97_tddft_file} -c {cores} -m {mem} -n 1 -j ${{opt_jid}})
 """
 
-RUN_DLPNO-STEOM-CCSD_TEMPLATE = """\
+RUN_DLPNO_TEMPLATE = """\
 #!/bin/bash
-jid=$(qorca -i ./{ccsd_file} -c {cores} -m 8000 -d 6000 -n 1 -j ${{opt_jid}})
+# Pass the opt job ID as an argument: ./run_dlpno.sh <opt_jid>
+opt_jid=$1
+dlpno_jid=$(qorca -i ./{dlpno_file} -c {cores} -m {dlpno_mem} -d 6000 -n 1 -j ${{opt_jid}})
 """
 
-def main():
-    parser = argparse.ArgumentParser(description="Generate ORCA inputs + run script")
-    parser.add_argument("name", help="Input file name")
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Generate ORCA input files and submission scripts",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
+    parser.add_argument("name", help="Base name for output files")
     parser.add_argument("xyz", help="Input .xyz file")
-    parser.add_argument("charge", help="Molecule net charge", type=int)
-    parser.add_argument("-c", "--cores", type=int, default=16)
-    args = parser.parse_args()
+    parser.add_argument("charge", type=int, help="Molecule net charge")
+    parser.add_argument("-m", "--mult", type=int, default=1,
+                        help="Spin multiplicity")
+    parser.add_argument("-s", "--solvent", default="water",
+                        help="Solvent name for CPCM (e.g. water, acetonitrile, dichloromethane)")
+    parser.add_argument("-c", "--cores", type=int, default=16,
+                        help="Number of CPU cores for job submission")
+    parser.add_argument("--maxcore", type=int, default=4000,
+                        help="Memory per core in MB for ORCA (%maxcore)")
+    return parser.parse_args()
 
-    xyz_path = Path(args.xyz)
 
+def check_xyz(xyz_path: Path):
     if not xyz_path.exists():
         print(f"Error: {xyz_path} not found.")
         sys.exit(1)
-
     if xyz_path.suffix != ".xyz":
-        print("Error: input must be .xyz")
+        print("Error: input file must have .xyz extension.")
         sys.exit(1)
 
-    stem = args.name
-    mult = 1
 
-    b3lyp_opt_stem = f"{stem}_b3lyp_def2-tzvp_opt"
-    b3lyp_opt_file = Path(b3lyp_opt_stem + ".inp")
-    b3lyp_opt_xyz_file = Path(b3lyp_opt_stem + ".xyz")
-    b3lyp_freq_file = Path(f"{stem}_b3lyp_def2-tzvp_freq.inp")
-    cam-b3lyp_tddft_file = Path(f"{stem}_cam-b3lyp_def2-tzvp_tddft.inp")
-    wb97x-d3_tddft_file = Path(f"{stem}_wb9x-d3_def2-tzvp_tddft.inp")
-    dlpno-steom-ccsd_file = Path(f"{stem}_dlpno_steom_ccsd.inp")
-    run_file = Path(f"run_{stem}_opt_freq_tddft.sh")
+def write_file(path: Path, content: str, executable: bool = False):
+    path.write_text(content)
+    if executable:
+        os.chmod(path, 0o755)
+    print(f"  Written: {path}")
+
+
+def main():
+    args = parse_args()
+    xyz_path = Path(args.xyz)
+    check_xyz(xyz_path)
+
+    stem = args.name
+    cores = args.cores
+    maxcore = args.maxcore
+    mem = cores * maxcore // 1000  # total GB for job scheduler
+
+    # --- File paths ---
+    opt_stem = f"{stem}_b3lyp_def2-tzvp_opt"
+    opt_file = Path(opt_stem + ".inp")
+    opt_xyz = Path(opt_stem + ".xyz")  # ORCA output geometry
+
+    freq_file     = Path(f"{stem}_b3lyp_def2-tzvp_freq.inp")
+    cam_tddft_file  = Path(f"{stem}_cam-b3lyp_def2-tzvp_tddft.inp")
+    wb97_tddft_file = Path(f"{stem}_wb97x-d3_def2-tzvp_tddft.inp")
+    dlpno_file    = Path(f"{stem}_dlpno_steom_ccsd.inp")
+    run_file      = Path(f"run_{stem}_opt_freq_tddft.sh")
     dlpno_run_file = Path(f"run_{stem}_dlpno_steom_ccsd.sh")
 
-    b3lyp_opt_file.write_text(B3LYP_OPT_TEMPLATE.format(charge=args.charge, mult=mult, xyz=xyz_path.name))
-    b3lyp_freq_file.write_text(B3LYP_FREQ_TEMPLATE.format(charge=args.charge, mult=mult, xyz=b3lyp_opt_xyz_file))
-    cam-b3lyp_tddft_file.write_text(CAM-B3LYP_TDDFT_TEMPLATE.format(charge=args.charge, mult=mult, xyz=b3lyp_opt_xyz_file))
-    wb97x-d3_tddft_file.write_text(WB97X-D3_TDDFT_TEMPLATE.format(charge=args.charge, mult=mult, xyz=b3lyp_opt_xyz_file))
-    run_file.write_text(RUN_TEMPLATE.format(
-        opt_file=opt_file,
-        freq_file=freq_file,
-        cores=args.cores
+    # --- Shared format kwargs ---
+    base_kwargs = dict(
+        charge=args.charge,
+        mult=args.mult,
+        solvent=args.solvent,
+        maxcore=maxcore,
+        nprocs=cores,
+    )
+
+    # --- Write ORCA inputs ---
+    print("Generating ORCA input files...")
+
+    write_file(opt_file, B3LYP_OPT_TEMPLATE.format(
+        xyz=xyz_path.name, **base_kwargs
+    ))
+    write_file(freq_file, B3LYP_FREQ_TEMPLATE.format(
+        xyz=opt_xyz, **base_kwargs
+    ))
+    write_file(cam_tddft_file, CAM_B3LYP_TDDFT_TEMPLATE.format(
+        xyz=opt_xyz, **base_kwargs
+    ))
+    write_file(wb97_tddft_file, WB97XD3_TDDFT_TEMPLATE.format(
+        xyz=opt_xyz, **base_kwargs
+    ))
+    write_file(dlpno_file, DLPNO_STEOM_CCSD_TEMPLATE.format(
+        xyz=opt_xyz, **base_kwargs
     ))
 
-    # Make run.sh executable
-    os.chmod(run_file, 0o755)
+    # --- Write run scripts ---
+    print("Generating run scripts...")
+
+    write_file(run_file, RUN_OPT_FREQ_TDDFT_TEMPLATE.format(
+        opt_file=opt_file,
+        freq_file=freq_file,
+        cam_tddft_file=cam_tddft_file,
+        wb97_tddft_file=wb97_tddft_file,
+        cores=cores,
+        mem=mem,
+    ), executable=True)
+
+    write_file(dlpno_run_file, RUN_DLPNO_TEMPLATE.format(
+        dlpno_file=dlpno_file,
+        cores=cores,
+        mem=mem,
+        dlpno_mem=mem + 2,  # DLPNO needs extra memory headroom
+    ), executable=True)
+
+    print("\nDone! Workflow summary:")
+    print(f"  1. Submit:  {run_file}  (opt → freq + TDDFT in parallel)")
+    print(f"  2. Submit:  {dlpno_run_file} <opt_jid>  (after opt completes)")
+
 
 if __name__ == "__main__":
     main()
