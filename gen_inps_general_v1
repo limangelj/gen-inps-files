@@ -6,8 +6,8 @@ import os
 
 B3LYP_OPT_TEMPLATE = """\
 ! B3LYP def2-TZVP def2/J RIJCOSX D3BJ TightSCF TightOpt DefGrid2 CPCM({solvent})
-%maxcore {maxcore}
-%pal nprocs {nprocs} end
+%maxcore 1000
+%pal nprocs 1 end
 %geom
   MaxIter 500
 end
@@ -16,15 +16,15 @@ end
 
 B3LYP_FREQ_TEMPLATE = """\
 ! B3LYP def2-TZVP def2/J RIJCOSX D3BJ TightSCF AnFreq DefGrid2 CPCM({solvent})
-%maxcore {maxcore}
-%pal nprocs {nprocs} end
+%maxcore 1000
+%pal nprocs 1 end
 * xyzfile {charge} {mult} {xyz}
 """
 
 CAM_B3LYP_TDDFT_TEMPLATE = """\
 ! CAM-B3LYP def2-TZVP def2/J RIJCOSX TightSCF DefGrid2 CPCM({solvent})
-%maxcore {maxcore}
-%pal nprocs {nprocs} end
+%maxcore 1000
+%pal nprocs 1 end
 %tddft
   nroots 6
   tda false
@@ -36,8 +36,8 @@ end
 
 WB97XD3_TDDFT_TEMPLATE = """\
 ! wB97X-D3 def2-TZVP def2/J RIJCOSX TightSCF DefGrid2 CPCM({solvent})
-%maxcore {maxcore}
-%pal nprocs {nprocs} end
+%maxcore 1000
+%pal nprocs 1 end
 %tddft
   nroots 6
   tda true
@@ -49,8 +49,8 @@ end
 
 DLPNO_STEOM_CCSD_TEMPLATE = """\
 ! DLPNO-STEOM-CCSD def2-TZVP def2-TZVP/C RIJCOSX TightSCF
-%maxcore {maxcore}
-%pal nprocs {nprocs} end
+%maxcore 1000
+%pal nprocs 1 end
 %cpcm
   solvent "{solvent}"
 end
@@ -75,15 +75,15 @@ end
 RUN_TEMPLATE = """\
 #!/bin/bash
 # Stage 1: geometry optimization
-opt_jid=$(qorca -i ./{opt_file} -c {cores} -m {mem})
+opt_jid=$(qorca -i ./{opt_file} -c {cores} -m 2500)
 
 # Stage 2: freq + TDDFT in parallel, all depend on opt
-freq_jid=$(qorca -i ./{freq_file} -c {cores} -m {mem} -n 1 -j ${{opt_jid}})
-cam_jid=$(qorca -i ./{cam_tddft_file} -c {cores} -m {mem} -j ${{opt_jid}})
-wb97_jid=$(qorca -i ./{wb97_tddft_file} -c {cores} -m {mem} -j ${{opt_jid}})
+freq_jid=$(qorca -i ./{freq_file} -c {cores} -m 2500 -n 1 -j ${{opt_jid}})
+cam_jid=$(qorca -i ./{cam_tddft_file} -c {cores} -m 2500 -j ${{opt_jid}})
+wb97_jid=$(qorca -i ./{wb97_tddft_file} -c {cores} -m 2500 -j ${{opt_jid}})
 
 # Stage 3: DLPNO depends on all stage 2 jobs finishing
-dlpno_jid=$(qorca -i ./{dlpno_file} -c {cores} -m {dlpno_mem} -d 6000 -n 1 -j ${{cam_jid}}:${{wb97_jid}}:${{freq_jid}})
+dlpno_jid=$(qorca -i ./{dlpno_file} -c {cores} -m 8000 -d 6000 -n 1 -j ${{cam_jid}}:${{wb97_jid}}:${{freq_jid}})
 """
 
 
@@ -101,10 +101,6 @@ def parse_args():
                         help="Solvent name for CPCM (e.g. water, acetonitrile, dichloromethane)")
     parser.add_argument("-c", "--cores", type=int, default=16,
                         help="Number of CPU cores requested from the scheduler (qorca -c)")
-    parser.add_argument("-n", "--nprocs", type=int, default=None,
-                        help="Number of cores for ORCA %%pal nprocs (defaults to --cores if not set)")
-    parser.add_argument("-m", "--maxcore", type=int, default=4000,
-                        help="Memory per core in MB for ORCA (%%maxcore)")
     return parser.parse_args()
 
 
@@ -131,9 +127,6 @@ def main():
 
     stem = args.name
     cores = args.cores
-    nprocs = args.nprocs if args.nprocs is not None else cores
-    maxcore = args.maxcore
-    mem = cores * maxcore // 1000  # total GB for job scheduler
 
     # --- File paths ---
     opt_stem = f"{stem}_b3lyp_def2-tzvp_opt"
@@ -151,8 +144,6 @@ def main():
         charge=args.charge,
         mult=args.mult,
         solvent=args.solvent,
-        maxcore=maxcore,
-        nprocs=nprocs,
     )
 
     # --- Write ORCA inputs ---
