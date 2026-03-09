@@ -72,19 +72,18 @@ end
 * xyzfile {charge} {mult} {xyz}
 """
 
-RUN_OPT_FREQ_TDDFT_TEMPLATE = """\
+RUN_TEMPLATE = """\
 #!/bin/bash
+# Stage 1: geometry optimization
 opt_jid=$(qorca -i ./{opt_file} -c {cores} -m {mem})
-freq_jid=$(qorca -i ./{freq_file} -c {cores} -m {mem} -n 1 -j ${{opt_jid}})
-cam_jid=$(qorca -i ./{cam_tddft_file} -c {cores} -m {mem} -n 1 -j ${{opt_jid}})
-wb97_jid=$(qorca -i ./{wb97_tddft_file} -c {cores} -m {mem} -n 1 -j ${{opt_jid}})
-"""
 
-RUN_DLPNO_TEMPLATE = """\
-#!/bin/bash
-# Pass the opt job ID as an argument: ./run_dlpno.sh <opt_jid>
-opt_jid=$1
-dlpno_jid=$(qorca -i ./{dlpno_file} -c {cores} -m {dlpno_mem} -d 6000 -n 1 -j ${{opt_jid}})
+# Stage 2: freq + TDDFT in parallel, all depend on opt
+freq_jid=$(qorca -i ./{freq_file} -c {cores} -m {mem} -n 1 -j ${{opt_jid}})
+cam_jid=$(qorca -i ./{cam_tddft_file} -c {cores} -m {mem} -j ${{opt_jid}})
+wb97_jid=$(qorca -i ./{wb97_tddft_file} -c {cores} -m {mem} -j ${{opt_jid}})
+
+# Stage 3: DLPNO depends on all stage 2 jobs finishing
+dlpno_jid=$(qorca -i ./{dlpno_file} -c {cores} -m {dlpno_mem} -d 6000 -n 1 -j ${{cam_jid}}:${{wb97_jid}}:${{freq_jid}})
 """
 
 
@@ -96,14 +95,16 @@ def parse_args():
     parser.add_argument("name", help="Base name for output files")
     parser.add_argument("xyz", help="Input .xyz file")
     parser.add_argument("charge", type=int, help="Molecule net charge")
-    parser.add_argument("-m", "--mult", type=int, default=1,
+    parser.add_argument("--mult", type=int, default=1,
                         help="Spin multiplicity")
     parser.add_argument("-s", "--solvent", default="water",
                         help="Solvent name for CPCM (e.g. water, acetonitrile, dichloromethane)")
     parser.add_argument("-c", "--cores", type=int, default=16,
-                        help="Number of CPU cores for job submission")
-    parser.add_argument("--maxcore", type=int, default=4000,
-                        help="Memory per core in MB for ORCA (%maxcore)")
+                        help="Number of CPU cores requested from the scheduler (qorca -c)")
+    parser.add_argument("-n", "--nprocs", type=int, default=None,
+                        help="Number of cores for ORCA %%pal nprocs (defaults to --cores if not set)")
+    parser.add_argument("-m", "--maxcore", type=int, default=4000,
+                        help="Memory per core in MB for ORCA (%%maxcore)")
     return parser.parse_args()
 
 
@@ -130,6 +131,7 @@ def main():
 
     stem = args.name
     cores = args.cores
+    nprocs = args.nprocs if args.nprocs is not None else cores
     maxcore = args.maxcore
     mem = cores * maxcore // 1000  # total GB for job scheduler
 
@@ -138,12 +140,11 @@ def main():
     opt_file = Path(opt_stem + ".inp")
     opt_xyz = Path(opt_stem + ".xyz")  # ORCA output geometry
 
-    freq_file     = Path(f"{stem}_b3lyp_def2-tzvp_freq.inp")
+    freq_file       = Path(f"{stem}_b3lyp_def2-tzvp_freq.inp")
     cam_tddft_file  = Path(f"{stem}_cam-b3lyp_def2-tzvp_tddft.inp")
     wb97_tddft_file = Path(f"{stem}_wb97x-d3_def2-tzvp_tddft.inp")
-    dlpno_file    = Path(f"{stem}_dlpno_steom_ccsd.inp")
-    run_file      = Path(f"run_{stem}_opt_freq_tddft.sh")
-    dlpno_run_file = Path(f"run_{stem}_dlpno_steom_ccsd.sh")
+    dlpno_file      = Path(f"{stem}_dlpno_steom_ccsd.inp")
+    run_file        = Path(f"run_{stem}.sh")
 
     # --- Shared format kwargs ---
     base_kwargs = dict(
@@ -151,7 +152,7 @@ def main():
         mult=args.mult,
         solvent=args.solvent,
         maxcore=maxcore,
-        nprocs=cores,
+        nprocs=nprocs,
     )
 
     # --- Write ORCA inputs ---
@@ -173,28 +174,23 @@ def main():
         xyz=opt_xyz, **base_kwargs
     ))
 
-    # --- Write run scripts ---
-    print("Generating run scripts...")
+    # --- Write run script ---
+    print("Generating run script...")
 
-    write_file(run_file, RUN_OPT_FREQ_TDDFT_TEMPLATE.format(
+    write_file(run_file, RUN_TEMPLATE.format(
         opt_file=opt_file,
         freq_file=freq_file,
         cam_tddft_file=cam_tddft_file,
         wb97_tddft_file=wb97_tddft_file,
-        cores=cores,
-        mem=mem,
-    ), executable=True)
-
-    write_file(dlpno_run_file, RUN_DLPNO_TEMPLATE.format(
         dlpno_file=dlpno_file,
         cores=cores,
         mem=mem,
-        dlpno_mem=mem + 2,  # DLPNO needs extra memory headroom
+        dlpno_mem=mem + 2,
     ), executable=True)
 
     print("\nDone! Workflow summary:")
-    print(f"  1. Submit:  {run_file}  (opt → freq + TDDFT in parallel)")
-    print(f"  2. Submit:  {dlpno_run_file} <opt_jid>  (after opt completes)")
+    print(f"  Submit: {run_file}")
+    print(f"  Chain:  opt → freq + CAM-B3LYP + wB97X-D3 (parallel) → DLPNO")
 
 
 if __name__ == "__main__":
