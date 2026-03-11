@@ -116,7 +116,7 @@ end
 * xyzfile {charge} {mult} {xyz}
 """
 
-DLPNO-CCSD_S0GEOM_TEMPLATE = """\
+DLPNO_CCSD_S0GEOM_TEMPLATE = """\
 ! DLPNO-CCSD(T) cc-pVDZ cc-pVDZ/C AutoAux NormalPNO TightSCF CPCM({solvent})
 %maxcore 7125
 %pal nprocs 8 end
