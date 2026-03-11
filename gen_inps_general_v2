@@ -4,7 +4,7 @@ import argparse
 import sys
 import os
 
-M06-2X_S0_OPT_TEMPLATE = """\
+M062X_S0_OPT_TEMPLATE = """\
 ! M06-2X def2-TZVP def2/J RIJCOSX D3BJ TightSCF TightOpt Grid5 FinalGrid6 CPCM({solvent})
 %maxcore 1000
 %pal nprocs 1 end
@@ -209,7 +209,7 @@ def main():
     # --- Write ORCA inputs ---
     print("Generating ORCA input files...")
 
-    write_file(s0_opt_file, M06-2X_S0_OPT_TEMPLATE.format(
+    write_file(s0_opt_file, M062X_S0_OPT_TEMPLATE.format(
         xyz=xyz_path.name, **base_kwargs
     ))
     write_file(t1_opt_file, M062X_T1_OPT_TEMPLATE.format(
