@@ -199,8 +199,8 @@ def report(directory):
 # ── Argument parsing & entry point ───────────────────────────
 def main():
     parser = argparse.ArgumentParser(
-        description='Monitor and extract information from simulations.'
-        usage='%(prog)s {status,extract,report} [-h]'
+        description='Monitor and extract information from simulations.',
+        usage='%(prog)s {status,extract,report} [-h]',
     )
     subparsers = parser.add_subparsers(dest='command')
 
