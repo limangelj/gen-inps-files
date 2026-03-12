@@ -180,24 +180,24 @@ def main():
     cores = args.cores
 
     # --- File paths ---
-    s0_opt_stem = f"{stem}_m062x_def2-tzvp_s0_opt"
-    t1_opt_stem = f"{stem}_m062x_def2-tzvp_t1_opt"
+    s0_opt_stem = f"{stem}_{args.solvent}_m062x_def2-tzvp_s0_opt"
+    t1_opt_stem = f"{stem}_{args.solvent}_m062x_def2-tzvp_t1_opt"
 
     s0_opt_file      = Path(s0_opt_stem + ".inp")
     t1_opt_file      = Path(t1_opt_stem + ".inp")
     s0_opt_xyz       = Path(s0_opt_stem + ".xyz")
     t1_opt_xyz       = Path(t1_opt_stem + ".xyz")
 
-    s0_freq_file     = Path(f"{stem}_m062x_def2-tzvp_s0_freq.inp")
-    t1_freq_file     = Path(f"{stem}_m062x_def2-tzvp_t1_freq.inp")
-    cam_tddft_file   = Path(f"{stem}_cam-b3lyp_def2-tzvp_tddft.inp")
-    wb9_tddft_file   = Path(f"{stem}_wb97x-d3_def2-tzvp_tddft.inp")
-    sos_tddft_file   = Path(f"{stem}_sos_wb88pp86_def2-tzvp_tddft.inp")
-    m06_tddft_file   = Path(f"{stem}_m062x_def2-tzvp_tddft.inp")
-    dlpno_file       = Path(f"{stem}_dlpno_steom_ccsd.inp")
-    ccsd_s0geom_file = Path(f"{stem}_dlpno_ccsdt_s0geom.inp")
-    ccsd_t1geom_file = Path(f"{stem}_dlpno_ccsdt_t1geom.inp")
-    run_file         = Path(f"run_{stem}.sh")
+    s0_freq_file     = Path(f"{stem}_{args.solvent}_m062x_def2-tzvp_s0_freq.inp")
+    t1_freq_file     = Path(f"{stem}_{args.solvent}_m062x_def2-tzvp_t1_freq.inp")
+    cam_tddft_file   = Path(f"{stem}_{args.solvent}_cam-b3lyp_def2-tzvp_tddft.inp")
+    wb9_tddft_file   = Path(f"{stem}_{args.solvent}_wb97x-d3_def2-tzvp_tddft.inp")
+    sos_tddft_file   = Path(f"{stem}_{args.solvent}_sos_wb88pp86_def2-tzvp_tddft.inp")
+    m06_tddft_file   = Path(f"{stem}_{args.solvent}_m062x_def2-tzvp_tddft.inp")
+    dlpno_file       = Path(f"{stem}_{args.solvent}_dlpno_steom_ccsd.inp")
+    ccsd_s0geom_file = Path(f"{stem}_{args.solvent}_dlpno_ccsdt_s0geom.inp")
+    ccsd_t1geom_file = Path(f"{stem}_{args.solvent}_dlpno_ccsdt_t1geom.inp")
+    run_file         = Path(f"run_{stem}_{args.solvent}.sh")
 
     # --- Shared format kwargs ---
     base_kwargs = dict(
