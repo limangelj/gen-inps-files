@@ -200,6 +200,7 @@ def report(directory):
 def main():
     parser = argparse.ArgumentParser(
         description='Monitor and extract information from simulations.'
+        usage='%(prog)s {status,extract,report} [-h]'
     )
     subparsers = parser.add_subparsers(dest='command')
 
@@ -228,7 +229,7 @@ def main():
     extract_parser.add_argument(
         'outfile',
         type=str,
-        help='Path to the output file (e.g. /nfs/outputs/rhodamine_b/sp.out).'
+        help='Path to the output file (e.g. /nfs/outputs/rhodamine_b/file.out).'
     )
 
     args = parser.parse_args()
