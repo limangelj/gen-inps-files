@@ -52,7 +52,6 @@ CAM_B3LYP_TDDFT_TEMPLATE = """\
   nroots 5
   tda false
   triplets true
-  maxdim 5
 end
 * xyzfile {charge} {mult} {xyz}
 """
@@ -65,7 +64,6 @@ WB97XD3_TDDFT_TEMPLATE = """\
   nroots 5
   tda true
   triplets true
-  maxdim 5
 end
 * xyzfile {charge} {mult} {xyz}
 """
@@ -78,7 +76,6 @@ M062X_TDDFT_TEMPLATE = """\
   nroots 5
   tda true
   triplets true
-  maxdim 5
 end
 * xyzfile {charge} {mult} {xyz}
 """
@@ -91,7 +88,6 @@ SOS_TDDFT_TEMPLATE = """\
   nroots 5
   tda false
   triplets true
-  maxdim 5
 end
 * xyzfile {charge} {mult} {xyz}
 """
