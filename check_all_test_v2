@@ -90,28 +90,13 @@ def get_info_chunks():
         ),
     ]
 
-# ── Parse S1 energy from singlet states chunk ─────────────────
-def parse_s1_energy(info_text):
-    """Extract S1 energy (eV) from the singlet states block."""
+# ── Parse S1 and T1 energy from the first STATE entry in a chunk ────────
+def parse_first_state_energy(info_text):
+    """Extract energy (eV) from the first STATE entry in a block."""
     if info_text is None:
         return None
     for line in info_text.splitlines():
-        # ORCA TD-DFT singlet block lines look like:
-        # STATE  1:  E=   0.123456 au      3.361 eV    27110.5 cm**-1
-        if line.strip().startswith('STATE  1:') or line.strip().startswith('STATE 1:'):
-            parts = line.split()
-            for i, part in enumerate(parts):
-                if part == 'eV':
-                    return parts[i - 1]
-    return None
-
-# ── Parse T1 energy from triplet states chunk ─────────────────
-def parse_t1_energy(info_text):
-    """Extract T1 energy (eV) from the triplet states block."""
-    if info_text is None:
-        return None
-    for line in info_text.splitlines():
-        if line.strip().startswith('STATE  1:') or line.strip().startswith('STATE 1:'):
+        if line.strip().startswith('STATE') and ':' in line:
             parts = line.split()
             for i, part in enumerate(parts):
                 if part == 'eV':
@@ -124,7 +109,8 @@ def parse_ccsd_energy(info_text):
     if info_text is None:
         return None
     for line in info_text.splitlines():
-        if line.strip().startswith('STATE  1:') or line.strip().startswith('STATE 1:'):
+        stripped = line.strip()
+        if stripped.startswith('IROOT=') and ':' in stripped:
             parts = line.split()
             for i, part in enumerate(parts):
                 if part == 'eV':
@@ -167,10 +153,10 @@ def extract_energies_from_dir(directory):
             c.find(outfile_lines)
             chunk_map[c.name] = c.info
 
-        s1  = parse_s1_energy(chunk_map.get('singlet states'))
-        t1  = parse_t1_energy(chunk_map.get('triplet states'))
-        cs1 = parse_ccsd_energy(chunk_map.get('ccsd singlet states'))
-        ct1 = parse_ccsd_energy(chunk_map.get('ccsd triplet states'))
+        s1  = parse_first_state_energy(chunk_map.get('singlet states'))
+        t1  = parse_first_state_energy(chunk_map.get('triplet states'))
+        cs1 = parse_first_state_energy(chunk_map.get('ccsd singlet states'))
+        ct1 = parse_first_state_energy(chunk_map.get('ccsd triplet states'))
 
         rows.append({
             'file':         out_file.name,
