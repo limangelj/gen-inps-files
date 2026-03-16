@@ -28,16 +28,17 @@ class ORCAInfoChunk:
         self.info = None
         self.start_line = None
 
-    def find(self, outfile_lines):
-        self.start_line = None
-        for i, line in enumerate(outfile_lines):
-            if (self.start_line is None) and (self.start_token in line):
-                self.start_line = i
-            if (self.start_line is not None) and \
-                (i > self.start_line + self.end_token_search_offset) and \
-                (self.end_token in line):
-                self.info = ''.join(outfile_lines[self.start_line + self.start_token_offset:i + self.end_token_offset])
-                return
+   def find(self, outfile_lines, alt_start_token=None):
+    self.start_line = None
+    for i, line in enumerate(outfile_lines):
+        if (self.start_line is None) and \
+            (self.start_token in line or (alt_start_token and alt_start_token in line)):
+            self.start_line = i
+        if (self.start_line is not None) and \
+            (i > self.start_line + self.end_token_search_offset) and \
+            (self.end_token in line):
+            self.info = ''.join(outfile_lines[self.start_line + self.start_token_offset:i + self.end_token_offset])
+            return
 
     def __str__(self):
         if self.info is None:
@@ -48,7 +49,7 @@ class ORCAInfoChunk:
 # ── Info chunks to extract ────────────────────────────────────
 def get_info_chunks():
     return [
-        ORCAInfoChunk(
+       ORCAInfoChunk(
             name='singlet states',
             start_token='TD-DFT EXCITED STATES (SINGLETS)',
             start_token_offset=-1,
@@ -148,9 +149,13 @@ def extract_energies_from_dir(directory):
             continue
 
         info_chunks = get_info_chunks()
+        alt_tokens = {
+            'singlet states': 'TD-DFT/TDA EXCITED STATES (SINGLETS)',
+            'triplet states': 'TD-DFT/TDA EXCITED STATES (TRIPLETS)',
+        }
         chunk_map = {}
         for c in info_chunks:
-            c.find(outfile_lines)
+            c.find(outfile_lines, alt_start_token=alt_tokens.get(c.name))
             chunk_map[c.name] = c.info
 
         s1  = parse_first_state_energy(chunk_map.get('singlet states'))
