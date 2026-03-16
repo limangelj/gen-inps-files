@@ -155,8 +155,8 @@ def extract_energies_from_dir(directory):
 
         s1  = parse_first_state_energy(chunk_map.get('singlet states'))
         t1  = parse_first_state_energy(chunk_map.get('triplet states'))
-        cs1 = parse_first_state_energy(chunk_map.get('ccsd singlet states'))
-        ct1 = parse_first_state_energy(chunk_map.get('ccsd triplet states'))
+        cs1 = parse_ccsd_energy(chunk_map.get('ccsd singlet states'))
+        ct1 = parse_ccsd_energy(chunk_map.get('ccsd triplet states'))
 
         rows.append({
             'file':         out_file.name,
