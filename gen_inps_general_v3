@@ -4,7 +4,7 @@ import argparse
 import sys
 import os
 
-B3LYP_S0_OPT_TEMPLATE = """\
+S0_B3LYP_OPT_TEMPLATE = """\
 ! B3LYP def2-TZVP def2/J RIJCOSX D3BJ TightSCF TightOpt DefGrid2 CPCM({solvent})
 %maxcore 1000
 %pal nprocs 1 end
@@ -14,14 +14,14 @@ end
 * xyzfile {charge} {mult} {xyz}
 """
 
-B3LYP_S0_FREQ_TEMPLATE = """\
+S0_B3LYP_FREQ_TEMPLATE = """\
 ! B3LYP def2-TZVP def2/J RIJCOSX D3BJ TightSCF AnFreq DefGrid2 CPCM({solvent})
 %maxcore 1000
 %pal nprocs 1 end
 * xyzfile {charge} {mult} {xyz}
 """
 
-M062X_S0_OPT_TEMPLATE = """\
+S0_M062X_OPT_TEMPLATE = """\
 ! M062X def2-TZVP def2/J RIJCOSX TightSCF TightOpt CPCM({solvent})
 %maxcore 1000
 %pal nprocs 1 end
@@ -31,14 +31,14 @@ end
 * xyzfile {charge} {mult} {xyz}
 """
 
-M062X_S0_FREQ_TEMPLATE = """\
+S0_M062X_FREQ_TEMPLATE = """\
 ! M062X def2-TZVP def2/J RIJCOSX TightSCF AnFreq CPCM({solvent})
 %maxcore 1000
 %pal nprocs 1 end
 * xyzfile {charge} {mult} {xyz}
 """
 
-M062X_T1_OPT_TEMPLATE = """\
+T1_M062X_OPT_TEMPLATE = """\
 ! M062X def2-TZVP def2/J RIJCOSX TightSCF TightOpt CPCM({solvent})
 %maxcore 1000
 %pal nprocs 1 end
@@ -51,7 +51,7 @@ end
 * xyzfile {charge} {mult} {xyz}
 """
 
-M062X_T1_FREQ_TEMPLATE = """\
+T1_M062X_FREQ_TEMPLATE = """\
 ! M062X def2-TZVP def2/J RIJCOSX TightSCF AnFreq CPCM({solvent})
 %maxcore 1000
 %pal nprocs 1 end
@@ -198,24 +198,33 @@ def main():
     cores = args.cores
 
     # --- File paths ---
-    s0_opt_stem = f"{stem}_{args.solvent}_m062x_def2-tzvp_s0_opt"
-    t1_opt_stem = f"{stem}_{args.solvent}_m062x_def2-tzvp_t1_opt"
+    s0_b3lyp_opt_stem = f"{stem}_{args.solvent}_b3lyp_def2-tzvp_s0_opt"
+    s0_m062x_opt_stem = f"{stem}_{args.solvent}_m062x_def2-tzvp_s0_opt"
+    t1_m062x_opt_stem = f"{stem}_{args.solvent}_m062x_def2-tzvp_t1_opt"
 
-    s0_opt_file      = Path(s0_opt_stem + ".inp")
-    t1_opt_file      = Path(t1_opt_stem + ".inp")
-    s0_opt_xyz       = Path(s0_opt_stem + ".xyz")
-    t1_opt_xyz       = Path(t1_opt_stem + ".xyz")
+    s0_b3lyp_opt_file = Path(s0_b3lyp_opt_stem + ".inp")
+    s0_m062x_opt_file = Path(s0_m062x_opt_stem + ".inp")
+    t1_m062x_opt_file = Path(t1_m062x_opt_stem + ".inp")
+    s0_b3lyp_opt_xyz  = Path(s0_b3lyp_opt_stem + ".xyz")
+    s0_m062x_opt_xyz  = Path(s0_m062x_opt_stem + ".xyz")
+    t1_m062x_opt_xyz  = Path(t1_m062x_opt_stem + ".xyz")
 
-    s0_freq_file     = Path(f"{stem}_{args.solvent}_m062x_def2-tzvp_s0_freq.inp")
-    t1_freq_file     = Path(f"{stem}_{args.solvent}_m062x_def2-tzvp_t1_freq.inp")
-    cam_tddft_file   = Path(f"{stem}_{args.solvent}_cam-b3lyp_def2-tzvp_tddft.inp")
-    wb9_tddft_file   = Path(f"{stem}_{args.solvent}_wb97x-d3_def2-tzvp_tddft.inp")
-    sos_tddft_file   = Path(f"{stem}_{args.solvent}_sos_wb88pp86_def2-tzvp_tddft.inp")
-    m06_tddft_file   = Path(f"{stem}_{args.solvent}_m062x_def2-tzvp_tddft.inp")
-    dlpno_file       = Path(f"{stem}_{args.solvent}_dlpno_steom_ccsd.inp")
-    ccsd_s0geom_file = Path(f"{stem}_{args.solvent}_dlpno_ccsdt_s0geom.inp")
-    ccsd_t1geom_file = Path(f"{stem}_{args.solvent}_dlpno_ccsdt_t1geom.inp")
-    run_file         = Path(f"run_{stem}_{args.solvent}.sh")
+    s0_b3lyp_freq_file       = Path(f"{stem}_{args.solvent}_b3lyp_def2-tzvp_s0_freq.inp")
+    s0_m062x_freq_file       = Path(f"{stem}_{args.solvent}_m062x_def2-tzvp_s0_freq.inp")
+    t1_m062x_freq_file       = Path(f"{stem}_{args.solvent}_m062x_def2-tzvp_t1_freq.inp")
+    cam_tddft_b3lyp_opt_file = Path(f"{stem}_{args.solvent}_b3lyp_opt_cam-b3lyp_def2-tzvp_tddft.inp")
+    cam_tddft_m062x_opt_file = Path(f"{stem}_{args.solvent}_m062x_opt_cam-b3lyp_def2-tzvp_tddft.inp")
+    wb9_tddft_b3lyp_opt_file = Path(f"{stem}_{args.solvent}_b3lyp_opt_wb97x-d3_def2-tzvp_tddft.inp")
+    wb9_tddft_m062x_opt_file = Path(f"{stem}_{args.solvent}_m062x_opt_wb97x-d3_def2-tzvp_tddft.inp")
+    sos_tddft_b3lyp_opt_file = Path(f"{stem}_{args.solvent}_b3lyp_opt_sos_wb88pp86_def2-tzvp_tddft.inp")
+    sos_tddft_m062x_opt_file = Path(f"{stem}_{args.solvent}_m062x_opt_sos_wb88pp86_def2-tzvp_tddft.inp")
+    m06_tddft_b3lyp_opt_file = Path(f"{stem}_{args.solvent}_b3lyp_opt__m062x_def2-tzvp_tddft.inp")
+    m06_tddft_m062x_opt_file = Path(f"{stem}_{args.solvent}_m062x_opt_m062x_def2-tzvp_tddft.inp")
+    dlpno_b3lyp_opt_file     = Path(f"{stem}_{args.solvent}_b3lyp_opt_dlpno_steom_ccsd.inp")
+    dlpno_m062x_opt_file     = Path(f"{stem}_{args.solvent}_m062x_opt_dlpno_steom_ccsd.inp")
+    ccsd_s0geom_file         = Path(f"{stem}_{args.solvent}_dlpno_ccsdt_s0geom.inp")
+    ccsd_t1geom_file         = Path(f"{stem}_{args.solvent}_dlpno_ccsdt_t1geom.inp")
+    run_file                 = Path(f"run_{stem}_{args.solvent}.sh")
     # --- Shared format kwargs ---
     base_kwargs = dict(
         charge=args.charge,
@@ -226,7 +235,10 @@ def main():
     # --- Write ORCA inputs ---
     print("Generating ORCA input files...")
 
-    write_file(s0_opt_file, M062X_S0_OPT_TEMPLATE.format(
+    write_file(s0_b3lyp_opt_file, S0_B3LYP_OPT_TEMPLATE.format(
+        xyz=xyz_path.name, **base_kwargs
+    ))
+    write_file(s0_m062x_opt_file, S0_M062X_OPT_TEMPLATE.format(
         xyz=xyz_path.name, **base_kwargs
     ))
     write_file(t1_opt_file, M062X_T1_OPT_TEMPLATE.format(
