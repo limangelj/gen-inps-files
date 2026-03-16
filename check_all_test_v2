@@ -1,0 +1,389 @@
+#!/usr/bin/env python3
+import os
+import subprocess
+import glob
+import argparse
+import csv
+from pathlib import Path
+
+# ── ANSI colors ──────────────────────────────────────────────
+RED    = '\033[0;31m'
+YELLOW = '\033[1;33m'
+GREEN  = '\033[0;32m'
+NC     = '\033[0m'
+
+# ── Define inp and out paths ──────────────────────────────────
+orca_root_inp_dir_path = "/nfs/inputs"
+orca_root_out_dir_path = "/nfs/outputs"
+
+# ── ORCAInfoChunk class ───────────────────────────────────────
+class ORCAInfoChunk:
+    """Piece of information from an ORCA output file"""
+    def __init__(self, name, start_token, end_token, end_token_search_offset=0, start_token_offset=0, end_token_offset=0):
+        self.name = name
+        self.start_token = start_token
+        self.start_token_offset = start_token_offset
+        self.end_token = end_token
+        self.end_token_search_offset = end_token_search_offset
+        self.end_token_offset = end_token_offset
+        self.info = None
+        self.start_line = None
+
+    def find(self, outfile_lines):
+        self.start_line = None
+        for i, line in enumerate(outfile_lines):
+            if (self.start_line is None) and (self.start_token in line):
+                self.start_line = i
+            if (self.start_line is not None) and \
+                (i > self.start_line + self.end_token_search_offset) and \
+                (self.end_token in line):
+                self.info = ''.join(outfile_lines[self.start_line + self.start_token_offset:i + self.end_token_offset])
+                return
+
+    def __str__(self):
+        if self.info is None:
+            return f'{self.name} not found'
+        else:
+            return f'found "{self.name}" on line {self.start_line+1}:\n{self.info}'
+
+# ── Info chunks to extract ────────────────────────────────────
+def get_info_chunks():
+    return [
+        ORCAInfoChunk(
+            name='singlet states',
+            start_token='EXCITED STATES (SINGLETS)',
+            start_token_offset=-1,
+            end_token_search_offset=1,
+            end_token='-------------',
+            end_token_offset=-1,
+        ),
+        ORCAInfoChunk(
+            name='triplet states',
+            start_token='EXCITED STATES (TRIPLETS)',
+            start_token_offset=-1,
+            end_token_search_offset=1,
+            end_token='-------------',
+            end_token_offset=-1,
+        ),
+        ORCAInfoChunk(
+            name='abs. spectra',
+            start_token='ABSORPTION SPECTRUM VIA TRANSITION ELECTRIC DIPOLE MOMENTS',
+            start_token_offset=-1,
+            end_token_search_offset=4,
+            end_token='-----------------',
+            end_token_offset=-1,
+        ),
+        ORCAInfoChunk(
+            name='ccsd singlet states',
+            start_token='STEOM-CCSD RESULTS (SINGLETS)',
+            start_token_offset=-1,
+            end_token_search_offset=1,
+            end_token='-------------------',
+            end_token_offset=-1,
+        ),
+        ORCAInfoChunk(
+            name='ccsd triplet states',
+            start_token='STEOM-CCSD RESULTS (TRIPLETS)',
+            start_token_offset=-1,
+            end_token_search_offset=1,
+            end_token='-------------------',
+            end_token_offset=-1,
+        ),
+    ]
+
+# ── Parse S1 energy from singlet states chunk ─────────────────
+def parse_s1_energy(info_text):
+    """Extract S1 energy (eV) from the singlet states block."""
+    if info_text is None:
+        return None
+    for line in info_text.splitlines():
+        # ORCA TD-DFT singlet block lines look like:
+        # STATE  1:  E=   0.123456 au      3.361 eV    27110.5 cm**-1
+        if line.strip().startswith('STATE  1:') or line.strip().startswith('STATE 1:'):
+            parts = line.split()
+            for i, part in enumerate(parts):
+                if part == 'eV':
+                    return parts[i - 1]
+    return None
+
+# ── Parse T1 energy from triplet states chunk ─────────────────
+def parse_t1_energy(info_text):
+    """Extract T1 energy (eV) from the triplet states block."""
+    if info_text is None:
+        return None
+    for line in info_text.splitlines():
+        if line.strip().startswith('STATE  1:') or line.strip().startswith('STATE 1:'):
+            parts = line.split()
+            for i, part in enumerate(parts):
+                if part == 'eV':
+                    return parts[i - 1]
+    return None
+
+# ── Parse S1/T1 from CCSD singlet/triplet chunks ──────────────
+def parse_ccsd_energy(info_text):
+    """Extract first excited state energy (eV) from STEOM-CCSD block."""
+    if info_text is None:
+        return None
+    for line in info_text.splitlines():
+        if line.strip().startswith('STATE  1:') or line.strip().startswith('STATE 1:'):
+            parts = line.split()
+            for i, part in enumerate(parts):
+                if part == 'eV':
+                    return parts[i - 1]
+    return None
+
+# ── Extract energies from all TDDFT .out files in a directory ─
+def extract_energies_from_dir(directory, output_csv=None):
+    dir_path = Path(orca_root_out_dir_path) / directory
+    if not dir_path.exists():
+        print(f"{RED}Error:{NC} directory not found: {dir_path}")
+        print(f"\nAvailable directories:")
+        for d in sorted(Path(orca_root_out_dir_path).iterdir()):
+            if d.is_dir():
+                print(f"  {d.name}")
+        return
+
+    out_files = sorted(dir_path.glob("*.out"))
+    if not out_files:
+        print(f"{RED}Error:{NC} no .out files found in {dir_path}")
+        return
+
+    rows = []
+    for out_file in out_files:
+        with open(out_file, 'r') as f:
+            outfile_lines = f.readlines()
+
+        # only process files that completed normally
+        content = ''.join(outfile_lines)
+        if "ORCA TERMINATED NORMALLY" not in content:
+            continue
+
+        info_chunks = get_info_chunks()
+        chunk_map = {}
+        for c in info_chunks:
+            c.find(outfile_lines)
+            chunk_map[c.name] = c.info
+
+        s1   = parse_s1_energy(chunk_map.get('singlet states'))
+        t1   = parse_t1_energy(chunk_map.get('triplet states'))
+        cs1  = parse_ccsd_energy(chunk_map.get('ccsd singlet states'))
+        ct1  = parse_ccsd_energy(chunk_map.get('ccsd triplet states'))
+
+        rows.append({
+            'file':              out_file.name,
+            'S1 (eV)':          s1  if s1  else 'not found',
+            'T1 (eV)':          t1  if t1  else 'not found',
+            'CCSD S1 (eV)':     cs1 if cs1 else 'not found',
+            'CCSD T1 (eV)':     ct1 if ct1 else 'not found',
+        })
+
+    if not rows:
+        print(f"No completed TDDFT output files found in: {dir_path}")
+        return
+
+    # ── Print table to terminal ───────────────────────────────
+    col_widths = {
+        'file':          max(len(r['file'])         for r in rows),
+        'S1 (eV)':       max(len(str(r['S1 (eV)'])) for r in rows),
+        'T1 (eV)':       max(len(str(r['T1 (eV)'])) for r in rows),
+        'CCSD S1 (eV)':  max(len(str(r['CCSD S1 (eV)'])) for r in rows),
+        'CCSD T1 (eV)':  max(len(str(r['CCSD T1 (eV)'])) for r in rows),
+    }
+    # ensure headers fit
+    for key in col_widths:
+        col_widths[key] = max(col_widths[key], len(key))
+
+    header = (
+        f"{'file':<{col_widths['file']}} | "
+        f"{'S1 (eV)':>{col_widths['S1 (eV)']}} | "
+        f"{'T1 (eV)':>{col_widths['T1 (eV)']}} | "
+        f"{'CCSD S1 (eV)':>{col_widths['CCSD S1 (eV)']}} | "
+        f"{'CCSD T1 (eV)':>{col_widths['CCSD T1 (eV)']}}"
+    )
+    divider = '─' * len(header)
+    print(f"\n{divider}")
+    print(f"EXTRACTED ENERGIES | {directory}")
+    print(divider)
+    print(header)
+    print(divider)
+    for r in rows:
+        print(
+            f"{r['file']:<{col_widths['file']}} | "
+            f"{str(r['S1 (eV)']):>{col_widths['S1 (eV)']}} | "
+            f"{str(r['T1 (eV)']):>{col_widths['T1 (eV)']}} | "
+            f"{str(r['CCSD S1 (eV)']):>{col_widths['CCSD S1 (eV)']}} | "
+            f"{str(r['CCSD T1 (eV)']):>{col_widths['CCSD T1 (eV)']}}"
+        )
+    print(divider)
+
+    # ── Write CSV ─────────────────────────────────────────────
+    if output_csv is None:
+        output_csv = f"{directory}_energies.csv"
+    csv_path = Path(output_csv)
+    with open(csv_path, 'w', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=['file', 'S1 (eV)', 'T1 (eV)', 'CCSD S1 (eV)', 'CCSD T1 (eV)'])
+        writer.writeheader()
+        writer.writerows(rows)
+    print(f"\nSaved to: {csv_path}")
+
+# ── Get running SLURM job names ───────────────────────────────
+def get_running_jobs():
+    result = subprocess.run(["squeue", "-o", "%j"], capture_output=True, text=True)
+    return set(result.stdout.strip().splitlines())
+
+# ── Check status of jobs in a specific directory ──────────────
+def check_jobs_in_dir(directory):
+    dir_path = Path(orca_root_inp_dir_path) / directory
+    if not dir_path.exists():
+        print(f"{RED}Error:{NC} input directory not found: {dir_path}")
+        print(f"\nAvailable directories:")
+        for d in sorted(Path(orca_root_inp_dir_path).iterdir()):
+            if d.is_dir():
+                print(f"  {d.name}")
+        return []
+
+    running_jobs = get_running_jobs()
+    inp_files = list(dir_path.glob("*.inp"))
+
+    if not inp_files:
+        print(f"{RED}Error:{NC} no .inp files found in {dir_path}")
+        return []
+
+    completed_out_files = []
+
+    for inp_path in sorted(inp_files):
+        inp_file        = inp_path.name
+        inp_file_no_ext = inp_path.stem
+        out_file        = Path(orca_root_out_dir_path) / directory / f"{inp_file_no_ext}.out"
+        label           = f"{directory}/{inp_file}"
+
+        if inp_file_no_ext in running_jobs:
+            status = f"{YELLOW}running{NC}     | {label}"
+        elif out_file.exists():
+            with open(out_file, 'r') as f:
+                content = f.read()
+            if "ORCA TERMINATED NORMALLY" in content:
+                status = f"{GREEN}complete{NC}    | {label}"
+                completed_out_files.append(out_file)
+            else:
+                status = f"{RED}failed{NC}      | {label}"
+        else:
+            status = f"not started | {label}"
+
+        print(status)
+
+    return completed_out_files
+
+# ── Check status for all jobs ─────────────────────────────────
+def check_jobs():
+    running_jobs = get_running_jobs()
+    inp_files = glob.glob(os.path.join(orca_root_inp_dir_path, "**", "*.inp"), recursive=True)
+
+    for inp_path in sorted(inp_files):
+        inp_dir         = os.path.dirname(inp_path)
+        inp_file        = os.path.basename(inp_path)
+        inp_file_no_ext = os.path.splitext(inp_file)[0]
+        rel_dir         = os.path.basename(inp_dir)
+        out_file        = os.path.join(orca_root_out_dir_path, rel_dir, f"{inp_file_no_ext}.out")
+        label           = f"{rel_dir}/{inp_file}"
+
+        if inp_file_no_ext in running_jobs:
+            status = f"{YELLOW}running{NC}     | {label}"
+        elif os.path.isfile(out_file):
+            with open(out_file, 'r') as f:
+                content = f.read()
+            if "ORCA TERMINATED NORMALLY" in content:
+                status = f"{GREEN}complete{NC}    | {label}"
+            else:
+                status = f"{RED}failed{NC}      | {label}"
+        else:
+            status = f"not started | {label}"
+
+        print(status)
+
+# ── Report: status + extract completed jobs in a directory ────
+def report(directory):
+    print(f"{'─' * 60}")
+    print(f"JOB STATUS | {directory}")
+    print(f"{'─' * 60}")
+    completed_out_files = check_jobs_in_dir(directory)
+
+    if completed_out_files:
+        print(f"\n{'─' * 60}")
+        print(f"EXTRACTED RESULTS | {directory}")
+        print(f"{'─' * 60}")
+        for out_file in completed_out_files:
+            extract_results(out_file)
+    else:
+        print(f"\nNo completed jobs to extract results from in: {directory}")
+
+# ── Extract raw results from a single output file ────────────
+def extract_results(outfile_path):
+    outfile = Path(outfile_path).resolve()
+    if not outfile.is_file():
+        print(f"{RED}Error:{NC} file not found: {outfile}")
+        return
+
+    print(f"\nExtracting results from: {outfile}\n{'─' * 60}")
+    info_chunks = get_info_chunks()
+    with open(outfile, 'r') as f:
+        outfile_lines = f.readlines()
+        for c in info_chunks:
+            c.find(outfile_lines)
+            print(c)
+
+# ── Argument parsing & entry point ───────────────────────────
+def main():
+    parser = argparse.ArgumentParser(
+        description='Monitor and extract information from simulations.',
+        usage='%(prog)s {status,extract,report} [-h]',
+    )
+    subparsers = parser.add_subparsers(dest='command')
+
+    # 'status' subcommand
+    subparsers.add_parser(
+        'status',
+        help='Check the status of all jobs.'
+    )
+
+    # 'report' subcommand
+    report_parser = subparsers.add_parser(
+        'report',
+        help='Print status of all jobs in a directory and extract calculated excited state(s) results for completed ones.'
+    )
+    report_parser.add_argument(
+        'directory',
+        type=str,
+        help='Directory name under /nfs/outputs to report on (e.g. rhodamine_b).'
+    )
+
+    # 'extract' subcommand
+    extract_parser = subparsers.add_parser(
+        'extract',
+        help='Extract S1/T1 energies from all completed .out files in a directory and save to CSV.'
+    )
+    extract_parser.add_argument(
+        'directory',
+        type=str,
+        help='Directory name under /nfs/outputs (e.g. rhodamine_b).'
+    )
+    extract_parser.add_argument(
+        '--output', '-o',
+        type=str,
+        default=None,
+        help='Output CSV filename (default: <directory>_energies.csv).'
+    )
+
+    args = parser.parse_args()
+
+    if args.command == 'status':
+        check_jobs()
+    elif args.command == 'extract':
+        extract_energies_from_dir(args.directory, args.output)
+    elif args.command == 'report':
+        report(args.directory)
+    else:
+        parser.print_help()
+
+if __name__ == "__main__":
+    main()
