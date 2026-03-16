@@ -241,50 +241,76 @@ def main():
     write_file(s0_m062x_opt_file, S0_M062X_OPT_TEMPLATE.format(
         xyz=xyz_path.name, **base_kwargs
     ))
-    write_file(t1_opt_file, M062X_T1_OPT_TEMPLATE.format(
+    write_file(t1_m062x_opt_file, M062X_T1_OPT_TEMPLATE.format(
         xyz=xyz_path.name, **{**base_kwargs, "mult": 3}
     ))
-    write_file(s0_freq_file, M062X_S0_FREQ_TEMPLATE.format(
-        xyz=s0_opt_xyz, **base_kwargs
+    write_file(s0_b3lyp_freq_file, S0_B3LYP_FREQ_TEMPLATE.format(
+        xyz=s0_b3lyp_opt_file, **base_kwargs
     ))
-    write_file(t1_freq_file, M062X_T1_FREQ_TEMPLATE.format(
-        xyz=t1_opt_xyz, **{**base_kwargs, "mult": 3}
+    write_file(s0_m062x_freq_file, S0_M062X_FREQ_TEMPLATE.format(
+        xyz=s0_m062x_freq_file, **base_kwargs
     ))
-    write_file(cam_tddft_file, CAM_B3LYP_TDDFT_TEMPLATE.format(
-        xyz=s0_opt_xyz, **base_kwargs
+    write_file(t1_m062x_freq_file, T1_M062X_FREQ_TEMPLATE.format(
+        xyz=t1_m062x_opt_xyz, **{**base_kwargs, "mult": 3}
     ))
-    write_file(wb9_tddft_file, WB97XD3_TDDFT_TEMPLATE.format(
-        xyz=s0_opt_xyz, **base_kwargs
+    write_file(cam_tddft_b3lyp_opt_file, CAM_B3LYP_TDDFT_TEMPLATE.format(
+        xyz=s0_b3lyp_opt_xyz, **base_kwargs
+    ))
+     write_file(cam_tddft_m062x_opt_file, CAM_B3LYP_TDDFT_TEMPLATE.format(
+        xyz=s0_m062x_opt_xyz, **base_kwargs
+    ))
+    write_file(wb9_tddft_b3lyp_opt_file, WB97XD3_TDDFT_TEMPLATE.format(
+        xyz=s0_b3lyp_opt_xyz, **base_kwargs
+    ))
+    write_file(wb9_tddft_m062x_opt_file, WB97XD3_TDDFT_TEMPLATE.format(
+        xyz=s0_m062x_opt_xyz, **base_kwargs
+    ))
+    write_file(sos_tddft_b3lyp_opt_file, SOS_TDDFT_TEMPLATE.format(
+        xyz=s0_b3lyp_opt_file, cores=cores, **base_kwargs
     ))
     write_file(sos_tddft_file, SOS_TDDFT_TEMPLATE.format(
-        xyz=s0_opt_xyz, cores=cores, **base_kwargs
+        xyz=s0_m062x_opt_xyz, cores=cores, **base_kwargs
     ))
-    write_file(m06_tddft_file, M062X_TDDFT_TEMPLATE.format(
-        xyz=s0_opt_xyz, **base_kwargs
+    write_file(m06_tddft_b3lyp_opt_file, M062X_TDDFT_TEMPLATE.format(
+        xyz=s0_b3lyp_opt_file, **base_kwargs
     ))
-    write_file(dlpno_file, DLPNO_STEOM_CCSD_TEMPLATE.format(
-        xyz=s0_opt_xyz, **base_kwargs
+    write_file(m06_tddft_m062x_opt_file, M062X_TDDFT_TEMPLATE.format(
+        xyz=s0_m062x_opt_xyz, **base_kwargs
     ))
-    write_file(ccsd_s0geom_file, DLPNO_CCSD_S0GEOM_TEMPLATE.format(
-        xyz=s0_opt_xyz, **base_kwargs
+    write_file(dlpno_b3lyp_opt_file, DLPNO_STEOM_CCSD_TEMPLATE.format(
+        xyz=s0_b3lyp_opt_file, **base_kwargs
     ))
-    write_file(ccsd_t1geom_file, DLPNO_CCSD_S0GEOM_TEMPLATE.format(
-        xyz=t1_opt_xyz, **{**base_kwargs, "mult": 3}
+    write_file(dlpno_m062x_opt_file, DLPNO_STEOM_CCSD_TEMPLATE.format(
+        xyz=s0_m062x_opt_xyz, **base_kwargs
     ))
 
-    # --- Write run script ---
+    write_file(ccsd_s0geom_file, DLPNO_CCSD_S0GEOM_TEMPLATE.format(
+        xyz=s0_m062x_opt_xyz, **base_kwargs
+    ))
+    write_file(ccsd_t1geom_file, DLPNO_CCSD_S0GEOM_TEMPLATE.format(
+        xyz=t1_m062x_opt_xyz, **{**base_kwargs, "mult": 3}
+    ))
+
+      # --- Write run script ---
     print("Generating run script...")
 
     write_file(run_file, RUN_TEMPLATE.format(
-        s0_opt_file=s0_opt_file,
-        t1_opt_file=t1_opt_file,
-        s0_freq_file=s0_freq_file,
-        t1_freq_file=t1_freq_file,
-        cam_tddft_file=cam_tddft_file,
-        wb9_tddft_file=wb9_tddft_file,
-        sos_tddft_file=sos_tddft_file,
-        m06_tddft_file=m06_tddft_file,
-        dlpno_file=dlpno_file,
+        s0_b3lyp_opt_file=s0_b3lyp_opt_file,
+        s0_m062x_opt_file=s0_m062x_opt_file,
+        t1_m062x_opt_file=t1_m062x_opt_file,
+        s0_b3lyp_freq_file=s0_b3lyp_freq_file,
+        s0_m062x_freq_file=s0_m062x_freq_file,
+        t1_m062x_freq_file=t1_m062x_freq_file,
+        cam_tddft_b3lyp_opt_file=cam_tddft_b3lyp_opt_file,
+        cam_tddft_m062x_opt_file=cam_tddft_m062x_opt_file,
+        wb9_tddft_b3lyp_opt_file=wb9_tddft_b3lyp_opt_file,
+        wb9_tddft_m062x_opt_file=wb9_tddft_m062x_opt_file,
+        sos_tddft_b3lyp_opt_file=sos_tddft_b3lyp_opt_file,
+        sos_tddft_m062x_opt_file=sos_tddft_m062x_opt_file,
+        m06_tddft_b3lyp_opt_file=m06_tddft_b3lyp_opt_file,
+        m06_tddft_m062x_opt_file=m06_tddft_m062x_opt_file,
+        dlpno_b3lyp_opt_file=dlpno_b3lyp_opt_file,
+        dlpno_m062x_opt_file=dlpno_m062x_opt_file,
         ccsd_s0geom_file=ccsd_s0geom_file,
         ccsd_t1geom_file=ccsd_t1geom_file,
         cores=cores,
@@ -292,8 +318,17 @@ def main():
 
     print("\nDone! Workflow summary:")
     print(f"  Submit: {run_file}")
+    print(f"  S0 opt:       {s0_b3lyp_opt_file}, {s0_m062x_opt_file}")
+    print(f"  T1 opt:       {t1_m062x_opt_file}")
+    print(f"  S0 freq:      {s0_b3lyp_freq_file}, {s0_m062x_freq_file}")
+    print(f"  T1 freq:      {t1_m062x_freq_file}")
+    print(f"  CAM-TDDFT:    {cam_tddft_b3lyp_opt_file}, {cam_tddft_m062x_opt_file}")
+    print(f"  wB97X-TDDFT:  {wb9_tddft_b3lyp_opt_file}, {wb9_tddft_m062x_opt_file}")
+    print(f"  SOS-TDDFT:    {sos_tddft_b3lyp_opt_file}, {sos_tddft_m062x_opt_file}")
+    print(f"  M06-TDDFT:    {m06_tddft_b3lyp_opt_file}, {m06_tddft_m062x_opt_file}")
+    print(f"  DLPNO:        {dlpno_b3lyp_opt_file}, {dlpno_m062x_opt_file}")
+    print(f"  CCSD(T):      {ccsd_s0geom_file}, {ccsd_t1geom_file}")
     print(f"  Chain:  S0/T1 opt → freq + TDDFT (parallel) → CCSD(T) + DLPNO")
-
 
 if __name__ == "__main__":
     main()
