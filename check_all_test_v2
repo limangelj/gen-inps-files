@@ -28,18 +28,17 @@ class ORCAInfoChunk:
         self.info = None
         self.start_line = None
 
-   def find(self, outfile_lines, alt_start_token=None):
-       """Attempt to locate this info chunk within the file."""
-    self.start_line = None
-    for i, line in enumerate(outfile_lines):
-        if (self.start_line is None) and \
-            (self.start_token in line or (alt_start_token and alt_start_token in line)):
-            self.start_line = i
-        if (self.start_line is not None) and \
-            (i > self.start_line + self.end_token_search_offset) and \
-            (self.end_token in line):
-            self.info = ''.join(outfile_lines[self.start_line + self.start_token_offset:i + self.end_token_offset])
-            return
+    def find(self, outfile_lines, alt_start_token=None):
+        self.start_line = None
+        for i, line in enumerate(outfile_lines):
+            if (self.start_line is None) and \
+                (self.start_token in line or (alt_start_token and alt_start_token in line)):
+                self.start_line = i
+            if (self.start_line is not None) and \
+                (i > self.start_line + self.end_token_search_offset) and \
+                (self.end_token in line):
+                self.info = ''.join(outfile_lines[self.start_line + self.start_token_offset:i + self.end_token_offset])
+                return
 
     def __str__(self):
         if self.info is None:
@@ -50,7 +49,7 @@ class ORCAInfoChunk:
 # ── Info chunks to extract ────────────────────────────────────
 def get_info_chunks():
     return [
-       ORCAInfoChunk(
+        ORCAInfoChunk(
             name='singlet states',
             start_token='TD-DFT EXCITED STATES (SINGLETS)',
             start_token_offset=-1,
@@ -83,16 +82,16 @@ def get_info_chunks():
             end_token_offset=0,
         ),
         ORCAInfoChunk(
-        name='ccsd triplet states',
-        start_token='STEOM-CCSD RESULTS (TRIPLETS)',
-        start_token_offset=0,
-        end_token_search_offset=1,
-        end_token='STEOM-CCSD done',
-        end_token_offset=0,
+            name='ccsd triplet states',
+            start_token='STEOM-CCSD RESULTS (TRIPLETS)',
+            start_token_offset=0,
+            end_token_search_offset=1,
+            end_token='STEOM-CCSD done',
+            end_token_offset=0,
         ),
     ]
 
-# ── Parse S1 and T1 energy from the first STATE entry in a chunk ────────
+# ── Parse S1 and T1 energy from the first STATE entry in a chunk ─────
 def parse_first_state_energy(info_text):
     """Extract energy (eV) from the first STATE entry in a block."""
     if info_text is None:
@@ -304,10 +303,14 @@ def extract_results(outfile_path):
 
     print(f"\nExtracting results from: {outfile}\n{'─' * 60}")
     info_chunks = get_info_chunks()
+    alt_tokens = {
+        'singlet states': 'TD-DFT/TDA EXCITED STATES (SINGLETS)',
+        'triplet states': 'TD-DFT/TDA EXCITED STATES (TRIPLETS)',
+    }
     with open(outfile, 'r') as f:
         outfile_lines = f.readlines()
         for c in info_chunks:
-            c.find(outfile_lines)
+            c.find(outfile_lines, alt_start_token=alt_tokens.get(c.name))
             print(c)
 
 # ── Argument parsing & entry point ───────────────────────────
