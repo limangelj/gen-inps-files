@@ -29,6 +29,7 @@ class ORCAInfoChunk:
         self.start_line = None
 
    def find(self, outfile_lines, alt_start_token=None):
+       """Attempt to locate this info chunk within the file."""
     self.start_line = None
     for i, line in enumerate(outfile_lines):
         if (self.start_line is None) and \
