@@ -61,7 +61,7 @@ end
 * xyzfile {charge} {mult} {xyz}
 """
 
-CAM_B3LYP_TDDFT_B3LYP_OPT_TEMPLATE = """\
+CAM_B3LYP_TDDFT_TEMPLATE = """\
 ! CAM-B3LYP def2-TZVP def2/J RIJCOSX TightSCF CPCM({solvent})
 %maxcore 1000
 %pal nprocs 1 end
@@ -73,19 +73,7 @@ end
 * xyzfile {charge} {mult} {xyz}
 """
 
-CAM_B3LYP_TDDFT_M062X_OPT_TEMPLATE = """\
-! CAM-B3LYP def2-TZVP def2/J RIJCOSX TightSCF CPCM({solvent})
-%maxcore 1000
-%pal nprocs 1 end
-%tddft
-  nroots 5
-  tda false
-  triplets true
-end
-* xyzfile {charge} {mult} {xyz}
-"""
-
-WB97XD3_TDDFT_B3LYP_OPT_TEMPLATE = """\
+WB97XD3_TDDFT_TEMPLATE = """\
 ! wB97X-D3 def2-TZVP def2/J RIJCOSX TightSCF CPCM({solvent})
 %maxcore 1000
 %pal nprocs 1 end
@@ -97,19 +85,7 @@ end
 * xyzfile {charge} {mult} {xyz}
 """
 
-WB97XD3_TDDFT_M062X_OPT_TEMPLATE = """\
-! wB97X-D3 def2-TZVP def2/J RIJCOSX TightSCF CPCM({solvent})
-%maxcore 1000
-%pal nprocs 1 end
-%tddft
-  nroots 5
-  tda true
-  triplets true
-end
-* xyzfile {charge} {mult} {xyz}
-"""
-
-M062X_TDDFT_B3LYP_OPT_TEMPLATE = """\
+M062X_TDDFT_TEMPLATE = """\
 ! M062X def2-TZVP def2/J RIJCOSX TightSCF CPCM({solvent})
 %maxcore 1000
 %pal nprocs 1 end
@@ -121,19 +97,7 @@ end
 * xyzfile {charge} {mult} {xyz}
 """
 
-M062X_TDDFT_M062X_OPT_TEMPLATE = """\
-! M062X def2-TZVP def2/J RIJCOSX TightSCF CPCM({solvent})
-%maxcore 1000
-%pal nprocs 1 end
-%tddft
-  nroots 5
-  tda true
-  triplets true
-end
-* xyzfile {charge} {mult} {xyz}
-"""
-
-SOS_TDDFT_B3LYP_OPT_TEMPLATE = """\
+SOS_TDDFT_TEMPLATE = """\
 ! RI-SOS-wB88PP86 def2-TZVP def2-TZVP/C RIJCOSX def2/J TightSCF CPCM({solvent})
 %maxcore 5000
 %pal nprocs {cores} end
@@ -145,19 +109,7 @@ end
 * xyzfile {charge} {mult} {xyz}
 """
 
-SOS_TDDFT_M062X_OPT_TEMPLATE = """\
-! RI-SOS-wB88PP86 def2-TZVP def2-TZVP/C RIJCOSX def2/J TightSCF CPCM({solvent})
-%maxcore 5000
-%pal nprocs {cores} end
-%tddft
-  nroots 5
-  tda false
-  triplets true
-end
-* xyzfile {charge} {mult} {xyz}
-"""
-
-DLPNO_STEOM_CCSD_B3LYP_OPT_TEMPLATE = """\
+DLPNO_STEOM_CCSD_TEMPLATE = """\
 ! DLPNO-STEOM-CCSD def2-TZVP def2-TZVP/C RIJCOSX TightSCF
 %maxcore 1000
 %pal nprocs 1 end
@@ -182,28 +134,10 @@ end
 * xyzfile {charge} {mult} {xyz}
 """
 
-DLPNO_STEOM_CCSD_M062X_OPT_TEMPLATE = """\
-! DLPNO-STEOM-CCSD def2-TZVP def2-TZVP/C RIJCOSX TightSCF
-%maxcore 1000
-%pal nprocs 1 end
-%cpcm
-  solvent "{solvent}"
-end
-%mdci
-  NRoots 1
-  NActIP 8
-  NActEA 6
-  DoCISNat false
-  DoRootWise false
-  OThresh 0.005
-  VThresh 0.005
-  TCutPNOSingles 1e-11
-  NDAV 400
-  MaxIter 300
-  DTol 1e-5
-  DoSimpleDens false
-  AddL2Term true
-end
+DLPNO_CCSD_S0GEOM_TEMPLATE = """\
+! DLPNO-CCSD(T) cc-pVDZ cc-pVDZ/C AutoAux NormalPNO TightSCF CPCM({solvent})
+%maxcore 7125
+%pal nprocs 8 end
 * xyzfile {charge} {mult} {xyz}
 """
 
