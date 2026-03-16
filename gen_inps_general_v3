@@ -248,7 +248,7 @@ def main():
     write_file(s0_m062x_opt_file, S0_M062X_OPT_TEMPLATE.format(
         xyz=xyz_path.name, **base_kwargs
     ))
-    write_file(t1_m062x_opt_file, M062X_T1_OPT_TEMPLATE.format(
+    write_file(t1_m062x_opt_file, T1_M062X_OPT_TEMPLATE.format(
         xyz=xyz_path.name, **{**base_kwargs, "mult": 3}
     ))
     write_file(s0_b3lyp_freq_file, S0_B3LYP_FREQ_TEMPLATE.format(
