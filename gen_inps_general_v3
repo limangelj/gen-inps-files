@@ -275,7 +275,7 @@ def main():
     write_file(sos_tddft_b3lyp_opt_file, SOS_TDDFT_TEMPLATE.format(
         xyz=s0_b3lyp_opt_file, cores=cores, **base_kwargs
     ))
-    write_file(sos_tddft_file, SOS_TDDFT_TEMPLATE.format(
+    write_file(sos_tddft_m062x_opt_file, SOS_TDDFT_TEMPLATE.format(
         xyz=s0_m062x_opt_xyz, cores=cores, **base_kwargs
     ))
     write_file(m06_tddft_b3lyp_opt_file, M062X_TDDFT_TEMPLATE.format(
