@@ -225,7 +225,7 @@ def main():
     wb9_tddft_m062x_opt_file = Path(f"{stem}_{args.solvent}_m062x_opt_wb97x-d3_def2-tzvp_tddft.inp")
     sos_tddft_b3lyp_opt_file = Path(f"{stem}_{args.solvent}_b3lyp_opt_sos_wb88pp86_def2-tzvp_tddft.inp")
     sos_tddft_m062x_opt_file = Path(f"{stem}_{args.solvent}_m062x_opt_sos_wb88pp86_def2-tzvp_tddft.inp")
-    m06_tddft_b3lyp_opt_file = Path(f"{stem}_{args.solvent}_b3lyp_opt__m062x_def2-tzvp_tddft.inp")
+    m06_tddft_b3lyp_opt_file = Path(f"{stem}_{args.solvent}_b3lyp_opt_m062x_def2-tzvp_tddft.inp")
     m06_tddft_m062x_opt_file = Path(f"{stem}_{args.solvent}_m062x_opt_m062x_def2-tzvp_tddft.inp")
     dlpno_b3lyp_opt_file     = Path(f"{stem}_{args.solvent}_b3lyp_opt_dlpno_steom_ccsd.inp")
     dlpno_m062x_opt_file     = Path(f"{stem}_{args.solvent}_m062x_opt_dlpno_steom_ccsd.inp")
@@ -252,10 +252,10 @@ def main():
         xyz=xyz_path.name, **{**base_kwargs, "mult": 3}
     ))
     write_file(s0_b3lyp_freq_file, S0_B3LYP_FREQ_TEMPLATE.format(
-        xyz=s0_b3lyp_opt_file, **base_kwargs
+        xyz=s0_b3lyp_opt_xyz, **base_kwargs
     ))
     write_file(s0_m062x_freq_file, S0_M062X_FREQ_TEMPLATE.format(
-        xyz=s0_m062x_freq_file, **base_kwargs
+        xyz=s0_m062x_opt_xyz, **base_kwargs
     ))
     write_file(t1_m062x_freq_file, T1_M062X_FREQ_TEMPLATE.format(
         xyz=t1_m062x_opt_xyz, **{**base_kwargs, "mult": 3}
@@ -273,19 +273,19 @@ def main():
         xyz=s0_m062x_opt_xyz, **base_kwargs
     ))
     write_file(sos_tddft_b3lyp_opt_file, SOS_TDDFT_TEMPLATE.format(
-        xyz=s0_b3lyp_opt_file, cores=cores, **base_kwargs
+        xyz=s0_b3lyp_opt_xyz, cores=cores, **base_kwargs
     ))
     write_file(sos_tddft_m062x_opt_file, SOS_TDDFT_TEMPLATE.format(
         xyz=s0_m062x_opt_xyz, cores=cores, **base_kwargs
     ))
     write_file(m06_tddft_b3lyp_opt_file, M062X_TDDFT_TEMPLATE.format(
-        xyz=s0_b3lyp_opt_file, **base_kwargs
+        xyz=s0_b3lyp_opt_xyz, **base_kwargs
     ))
     write_file(m06_tddft_m062x_opt_file, M062X_TDDFT_TEMPLATE.format(
         xyz=s0_m062x_opt_xyz, **base_kwargs
     ))
     write_file(dlpno_b3lyp_opt_file, DLPNO_STEOM_CCSD_TEMPLATE.format(
-        xyz=s0_b3lyp_opt_file, **base_kwargs
+        xyz=s0_b3lyp_opt_xyz, **base_kwargs
     ))
     write_file(dlpno_m062x_opt_file, DLPNO_STEOM_CCSD_TEMPLATE.format(
         xyz=s0_m062x_opt_xyz, **base_kwargs
