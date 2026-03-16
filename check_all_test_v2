@@ -3,7 +3,6 @@ import os
 import subprocess
 import glob
 import argparse
-import csv
 from pathlib import Path
 
 # ── ANSI colors ──────────────────────────────────────────────
@@ -132,8 +131,8 @@ def parse_ccsd_energy(info_text):
                     return parts[i - 1]
     return None
 
-# ── Extract energies from all TDDFT .out files in a directory ─
-def extract_energies_from_dir(directory, output_csv=None):
+# ── Extract energies from TDDFT and DLPNO .out files in a directory ─
+def extract_energies_from_dir(directory):
     dir_path = Path(orca_root_out_dir_path) / directory
     if not dir_path.exists():
         print(f"{RED}Error:{NC} directory not found: {dir_path}")
@@ -143,9 +142,14 @@ def extract_energies_from_dir(directory, output_csv=None):
                 print(f"  {d.name}")
         return
 
-    out_files = sorted(dir_path.glob("*.out"))
+    # only grab tddft and dlpno_steom_ccsd output files
+    out_files = sorted([
+        f for f in dir_path.glob("*.out")
+        if "tddft" in f.name or "dlpno_steom_ccsd" in f.name
+    ])
+
     if not out_files:
-        print(f"{RED}Error:{NC} no .out files found in {dir_path}")
+        print(f"{RED}Error:{NC} no tddft or dlpno_steom_ccsd .out files found in {dir_path}")
         return
 
     rows = []
@@ -153,7 +157,6 @@ def extract_energies_from_dir(directory, output_csv=None):
         with open(out_file, 'r') as f:
             outfile_lines = f.readlines()
 
-        # only process files that completed normally
         content = ''.join(outfile_lines)
         if "ORCA TERMINATED NORMALLY" not in content:
             continue
@@ -164,32 +167,25 @@ def extract_energies_from_dir(directory, output_csv=None):
             c.find(outfile_lines)
             chunk_map[c.name] = c.info
 
-        s1   = parse_s1_energy(chunk_map.get('singlet states'))
-        t1   = parse_t1_energy(chunk_map.get('triplet states'))
-        cs1  = parse_ccsd_energy(chunk_map.get('ccsd singlet states'))
-        ct1  = parse_ccsd_energy(chunk_map.get('ccsd triplet states'))
+        s1  = parse_s1_energy(chunk_map.get('singlet states'))
+        t1  = parse_t1_energy(chunk_map.get('triplet states'))
+        cs1 = parse_ccsd_energy(chunk_map.get('ccsd singlet states'))
+        ct1 = parse_ccsd_energy(chunk_map.get('ccsd triplet states'))
 
         rows.append({
-            'file':              out_file.name,
-            'S1 (eV)':          s1  if s1  else 'not found',
-            'T1 (eV)':          t1  if t1  else 'not found',
-            'CCSD S1 (eV)':     cs1 if cs1 else 'not found',
-            'CCSD T1 (eV)':     ct1 if ct1 else 'not found',
+            'file':         out_file.name,
+            'S1 (eV)':      s1  if s1  else 'not found',
+            'T1 (eV)':      t1  if t1  else 'not found',
+            'CCSD S1 (eV)': cs1 if cs1 else 'not found',
+            'CCSD T1 (eV)': ct1 if ct1 else 'not found',
         })
 
     if not rows:
-        print(f"No completed TDDFT output files found in: {dir_path}")
+        print(f"No completed tddft or dlpno_steom_ccsd output files found in: {dir_path}")
         return
 
     # ── Print table to terminal ───────────────────────────────
-    col_widths = {
-        'file':          max(len(r['file'])         for r in rows),
-        'S1 (eV)':       max(len(str(r['S1 (eV)'])) for r in rows),
-        'T1 (eV)':       max(len(str(r['T1 (eV)'])) for r in rows),
-        'CCSD S1 (eV)':  max(len(str(r['CCSD S1 (eV)'])) for r in rows),
-        'CCSD T1 (eV)':  max(len(str(r['CCSD T1 (eV)'])) for r in rows),
-    }
-    # ensure headers fit
+    col_widths = {key: max(len(str(r[key])) for r in rows) for key in rows[0]}
     for key in col_widths:
         col_widths[key] = max(col_widths[key], len(key))
 
@@ -215,16 +211,6 @@ def extract_energies_from_dir(directory, output_csv=None):
             f"{str(r['CCSD T1 (eV)']):>{col_widths['CCSD T1 (eV)']}}"
         )
     print(divider)
-
-    # ── Write CSV ─────────────────────────────────────────────
-    if output_csv is None:
-        output_csv = f"{directory}_energies.csv"
-    csv_path = Path(output_csv)
-    with open(csv_path, 'w', newline='') as f:
-        writer = csv.DictWriter(f, fieldnames=['file', 'S1 (eV)', 'T1 (eV)', 'CCSD S1 (eV)', 'CCSD T1 (eV)'])
-        writer.writeheader()
-        writer.writerows(rows)
-    print(f"\nSaved to: {csv_path}")
 
 # ── Get running SLURM job names ───────────────────────────────
 def get_running_jobs():
@@ -360,18 +346,12 @@ def main():
     # 'extract' subcommand
     extract_parser = subparsers.add_parser(
         'extract',
-        help='Extract S1/T1 energies from all completed .out files in a directory and save to CSV.'
+        help='Extract S1/T1 energies from all tddft and dlpno_steom_ccsd .out files in a directory.'
     )
     extract_parser.add_argument(
         'directory',
         type=str,
         help='Directory name under /nfs/outputs (e.g. rhodamine_b).'
-    )
-    extract_parser.add_argument(
-        '--output', '-o',
-        type=str,
-        default=None,
-        help='Output CSV filename (default: <directory>_energies.csv).'
     )
 
     args = parser.parse_args()
@@ -379,7 +359,7 @@ def main():
     if args.command == 'status':
         check_jobs()
     elif args.command == 'extract':
-        extract_energies_from_dir(args.directory, args.output)
+        extract_energies_from_dir(args.directory)
     elif args.command == 'report':
         report(args.directory)
     else:
