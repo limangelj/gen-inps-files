@@ -75,18 +75,18 @@ def get_info_chunks():
         ORCAInfoChunk(
             name='ccsd singlet states',
             start_token='STEOM-CCSD RESULTS (SINGLETS)',
-            start_token_offset=-1,
+            start_token_offset=0,
             end_token_search_offset=1,
-            end_token='-------------------',
-            end_token_offset=-1,
+            end_token='STEOM-CCSD done',
+            end_token_offset=0,
         ),
         ORCAInfoChunk(
-            name='ccsd triplet states',
-            start_token='STEOM-CCSD RESULTS (TRIPLETS)',
-            start_token_offset=-1,
-            end_token_search_offset=1,
-            end_token='-------------------',
-            end_token_offset=-1,
+        name='ccsd triplet states',
+        start_token='STEOM-CCSD RESULTS (TRIPLETS)',
+        start_token_offset=0,
+        end_token_search_offset=1,
+        end_token='STEOM-CCSD done',
+        end_token_offset=0,
         ),
     ]
 
