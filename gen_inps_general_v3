@@ -263,7 +263,7 @@ def main():
     write_file(cam_tddft_b3lyp_opt_file, CAM_B3LYP_TDDFT_TEMPLATE.format(
         xyz=s0_b3lyp_opt_xyz, **base_kwargs
     ))
-     write_file(cam_tddft_m062x_opt_file, CAM_B3LYP_TDDFT_TEMPLATE.format(
+    write_file(cam_tddft_m062x_opt_file, CAM_B3LYP_TDDFT_TEMPLATE.format(
         xyz=s0_m062x_opt_xyz, **base_kwargs
     ))
     write_file(wb9_tddft_b3lyp_opt_file, WB97XD3_TDDFT_TEMPLATE.format(
