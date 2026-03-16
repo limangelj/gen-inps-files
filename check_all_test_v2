@@ -50,7 +50,7 @@ def get_info_chunks():
     return [
         ORCAInfoChunk(
             name='singlet states',
-            start_token='EXCITED STATES (SINGLETS)',
+            start_token='TD-DFT EXCITED STATES (SINGLETS)',
             start_token_offset=-1,
             end_token_search_offset=1,
             end_token='-------------',
@@ -58,7 +58,7 @@ def get_info_chunks():
         ),
         ORCAInfoChunk(
             name='triplet states',
-            start_token='EXCITED STATES (TRIPLETS)',
+            start_token='TD-DFT EXCITED STATES (TRIPLETS)',
             start_token_offset=-1,
             end_token_search_offset=1,
             end_token='-------------',
