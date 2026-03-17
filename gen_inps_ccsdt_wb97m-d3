@@ -38,6 +38,9 @@ CCSD_T1GEOM_TEMPLATE = """\
 ! UHF DLPNO-CCSD(T) cc-pVDZ cc-pVDZ/C AutoAux NormalPNO TightSCF CPCM({solvent})
 %maxcore 7125
 %pal nprocs 8 end
+%scf
+  HFTyp UHF
+end
 * xyzfile {charge} {mult} {xyz}
 """
 
