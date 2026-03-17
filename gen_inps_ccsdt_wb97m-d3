@@ -97,8 +97,8 @@ def main():
     t1_opt_file = Path(t1_opt_stem + ".inp")
     t1_opt_xyz  = Path(t1_opt_stem + ".xyz")
 
-    ccsd_s0geom_file = Path(f"{stem}_{solvent}_dlpno_ccsdt_s0geom.inp")
-    ccsd_t1geom_file = Path(f"{stem}_{solvent}_dlpno_ccsdt_t1geom.inp")
+    ccsd_s0geom_file = Path(f"{stem}_{solvent}_wb97m-d3_opt_dlpno_ccsdt_s0geom.inp")
+    ccsd_t1geom_file = Path(f"{stem}_{solvent}_wb97m-d3_opt_dlpno_ccsdt_t1geom.inp")
     run_file         = Path(f"run_{stem}_{solvent}_wb97m_dlpno_ccsdt.sh")
 
     # --- Write ORCA inputs ---
