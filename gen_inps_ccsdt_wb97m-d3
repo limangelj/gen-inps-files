@@ -5,7 +5,7 @@ import sys
 import os
 
 S0_OPT_TEMPLATE = """\
-! wB97M-D3 def2-TZVP def2/J RIJCOSX TightSCF TightOpt FREQ CPCM({solvent})
+! wB97M-D3BJ def2-TZVP def2/J RIJCOSX TightSCF TightOpt FREQ CPCM({solvent})
 %maxcore 1000
 %pal nprocs {cores} end
 %geom
@@ -15,7 +15,7 @@ end
 """
 
 T1_OPT_TEMPLATE = """\
-! UHF wB97M-D3 def2-TZVP def2/J RIJCOSX TightSCF TightOpt FREQ CPCM({solvent})
+! UHF wB97M-D3BJ def2-TZVP def2/J RIJCOSX TightSCF TightOpt FREQ CPCM({solvent})
 %maxcore 1000
 %pal nprocs {cores} end
 %scf
@@ -92,16 +92,16 @@ def main():
     cores   = args.cores
 
     # --- File paths ---
-    s0_opt_stem = f"{stem}_{solvent}_wb97m-d3_def2-tzvp_s0_opt"
+    s0_opt_stem = f"{stem}_{solvent}_wb97m-d3bj_def2-tzvp_s0_opt"
     s0_opt_file = Path(s0_opt_stem + ".inp")
     s0_opt_xyz  = Path(s0_opt_stem + ".xyz")
 
-    t1_opt_stem = f"{stem}_{solvent}_wb97m-d3_def2-tzvp_t1_opt"
+    t1_opt_stem = f"{stem}_{solvent}_wb97m-d3bj_def2-tzvp_t1_opt"
     t1_opt_file = Path(t1_opt_stem + ".inp")
     t1_opt_xyz  = Path(t1_opt_stem + ".xyz")
 
-    ccsd_s0geom_file = Path(f"{stem}_{solvent}_wb97m-d3_opt_dlpno_ccsdt_s0geom.inp")
-    ccsd_t1geom_file = Path(f"{stem}_{solvent}_wb97m-d3_opt_dlpno_ccsdt_t1geom.inp")
+    ccsd_s0geom_file = Path(f"{stem}_{solvent}_wb97m-d3bj_opt_dlpno_ccsdt_s0geom.inp")
+    ccsd_t1geom_file = Path(f"{stem}_{solvent}_wb97m-d3bj_opt_dlpno_ccsdt_t1geom.inp")
     run_file         = Path(f"run_{stem}_{solvent}_wb97m_dlpno_ccsdt.sh")
 
     # --- Write ORCA inputs ---
