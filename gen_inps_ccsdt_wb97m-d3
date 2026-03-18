@@ -92,11 +92,11 @@ def main():
     cores   = args.cores
 
     # --- File paths ---
-    s0_opt_stem = f"{stem}_{solvent}_wb97m-d3bj_def2-tzvp_s0_opt"
+    s0_opt_stem = f"{stem}_{solvent}_wb97m-d3bj_def2-tzvp_s0_freq_opt"
     s0_opt_file = Path(s0_opt_stem + ".inp")
     s0_opt_xyz  = Path(s0_opt_stem + ".xyz")
 
-    t1_opt_stem = f"{stem}_{solvent}_wb97m-d3bj_def2-tzvp_t1_opt"
+    t1_opt_stem = f"{stem}_{solvent}_wb97m-d3bj_def2-tzvp_t1_freq_opt"
     t1_opt_file = Path(t1_opt_stem + ".inp")
     t1_opt_xyz  = Path(t1_opt_stem + ".xyz")
 
