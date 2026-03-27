@@ -94,23 +94,25 @@ def build_mol(atoms, basis, charge=0, spin=0):
 
 def get_mo_coeffs_from_molden(molden_file, mol):
     """
-    Read MO coefficients from a molden file.
-    Returns (mo_coeffs, mo_occs, mo_energies).
-    For unrestricted: returns (alpha_coeffs, beta_coeffs, ...).
+    Read MO coefficients from a molden file using PySCF 2.x API.
+    molden.load returns (mol, mo_energy, mo_coeff, mo_occ, mo_sym, is_uhf)
+    For UHF: mo_coeff = (alpha_coeffs, beta_coeffs)
+             mo_energy = (alpha_energy, beta_energy)
+             mo_occ    = (alpha_occ, beta_occ)
     """
     with open(molden_file) as f:
         molden_content = f.read()
 
-    # Check if unrestricted (triplet) or restricted (singlet)
     is_unrestricted = "Beta" in molden_content or "BETA" in molden_content
 
-    if is_unrestricted:
-        mo_coeffs_a, mo_energy_a, mo_occ_a, mo_coeffs_b, mo_energy_b, mo_occ_b = \
-            molden.load(molden_file, mol)
-        return mo_coeffs_a, mo_occ_a, mo_energy_a, True
+    mol_out, mo_energy, mo_coeff, mo_occ, mo_sym, is_uhf = \
+        molden.load(molden_file)
+
+    if is_uhf:
+        # mo_coeff[0] = alpha, mo_coeff[1] = beta
+        return mo_coeff[0], mo_occ[0], mo_energy[0], True
     else:
-        mo_coeffs, mo_energy, mo_occ = molden.load(molden_file, mol)
-        return mo_coeffs, mo_occ, mo_energy, False
+        return mo_coeff, mo_occ, mo_energy, False
 
 
 def compute_mo_overlap(mol_d, mo_d, mol_a, mo_a):
