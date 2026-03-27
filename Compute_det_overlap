@@ -95,24 +95,30 @@ def build_mol(atoms, basis, charge=0, spin=0):
 def get_mo_coeffs_from_molden(molden_file, mol):
     """
     Read MO coefficients from a molden file using PySCF 2.x API.
-    molden.load returns (mol, mo_energy, mo_coeff, mo_occ, mo_sym, is_uhf)
-    For UHF: mo_coeff = (alpha_coeffs, beta_coeffs)
-             mo_energy = (alpha_energy, beta_energy)
-             mo_occ    = (alpha_occ, beta_occ)
+    Determines RHF vs UHF by inspecting shape of mo_coeff (result[2]):
+      UHF: shape (2, nao, nmo) — tuple of two arrays
+      RHF: shape (nao, nmo)    — single array
     """
-    with open(molden_file) as f:
-        molden_content = f.read()
+    result = molden.load(molden_file)
 
-    is_unrestricted = "Beta" in molden_content or "BETA" in molden_content
+    mo_energy = result[1]
+    mo_coeff  = result[2]
+    mo_occ    = result[3]
 
-    mol_out, mo_energy, mo_coeff, mo_occ, mo_sym, is_uhf = \
-        molden.load(molden_file)
+    # Determine UHF vs RHF by checking if mo_coeff is a tuple/has 3 dims
+    mo_coeff_arr = np.array(mo_coeff)
+    is_uhf = mo_coeff_arr.ndim == 3  # UHF: (2, nao, nmo)
 
     if is_uhf:
-        # mo_coeff[0] = alpha, mo_coeff[1] = beta
-        return mo_coeff[0], mo_occ[0], mo_energy[0], True
+        coeffs   = mo_coeff_arr[0]          # alpha coeffs (nao, nmo)
+        energies = np.array(mo_energy)[0]   # alpha energies (nmo,)
+        occs     = np.array(mo_occ)[0]      # alpha occupations (nmo,)
     else:
-        return mo_coeff, mo_occ, mo_energy, False
+        coeffs   = mo_coeff_arr             # (nao, nmo)
+        energies = np.array(mo_energy)      # (nmo,)
+        occs     = np.array(mo_occ)         # (nmo,)
+
+    return coeffs, occs, energies, is_uhf
 
 
 def compute_mo_overlap(mol_d, mo_d, mol_a, mo_a):
@@ -208,6 +214,11 @@ def main():
         # Read acceptor MOs (restricted singlet)
         mo_coeffs_a, mo_occ_a, mo_energy_a, _ = \
             get_mo_coeffs_from_molden(ACCEPTOR_MOLDEN, mol_acceptor)
+
+        # Debug print on first iteration only
+        if i == 0:
+            print(f"  Acceptor MO coeffs shape: {mo_coeffs_a.shape}")
+            print(f"  Acceptor MO energy shape: {mo_energy_a.shape}")
 
         # Ensure mo_coeffs_a is 2D (nao x nmo)
         if mo_coeffs_a.ndim == 1:
