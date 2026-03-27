@@ -264,10 +264,11 @@ def main():
     axes[1].set_ylabel("S(π*_D, π*_A)")
     axes[1].axhline(0, color="k", linewidth=0.5)
 
-    axes[2].plot(x_values, np.abs(V_DET), "g-o", markersize=3)
+    # Log scale for V_DET to match Figure 2b of paper
+    axes[2].semilogy(x_values, np.abs(V_DET), "g-o", markersize=3)
     axes[2].set_ylabel("|V_DET| ∝ |S·S*|")
     axes[2].set_xlabel("x displacement (Å)")
-    axes[2].axhline(0, color="k", linewidth=0.5)
+    axes[2].set_title("|V_DET| (log scale)")
 
     plt.tight_layout()
     plot_file = f"{BASE_DIR}/det_overlaps.png"
