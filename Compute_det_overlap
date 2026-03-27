@@ -172,10 +172,17 @@ def main():
     mo_coeffs_d, mo_occ_d, mo_energy_d, is_uhf = \
         get_mo_coeffs_from_molden(DONOR_MOLDEN, mol_donor)
 
+    # Ensure mo_coeffs_d is 2D (nao x nmo)
+    if mo_coeffs_d.ndim == 1:
+        nao = mol_donor.nao
+        nmo = mo_coeffs_d.shape[0] // nao
+        mo_coeffs_d = mo_coeffs_d.reshape(nao, nmo)
+
     # Extract pi_D (SOMO-1) and pi*_D (SOMO) from alpha orbitals
     pi_D      = mo_coeffs_d[:, DONOR_PI_IDX]
     pistar_D  = mo_coeffs_d[:, DONOR_PISTAR_IDX]
 
+    print(f"  Donor MO coeffs shape: {mo_coeffs_d.shape}")
     print(f"  pi_D    energy: {mo_energy_d[DONOR_PI_IDX]*27.211:.4f} eV")
     print(f"  pi*_D   energy: {mo_energy_d[DONOR_PISTAR_IDX]*27.211:.4f} eV")
 
@@ -201,6 +208,12 @@ def main():
         # Read acceptor MOs (restricted singlet)
         mo_coeffs_a, mo_occ_a, mo_energy_a, _ = \
             get_mo_coeffs_from_molden(ACCEPTOR_MOLDEN, mol_acceptor)
+
+        # Ensure mo_coeffs_a is 2D (nao x nmo)
+        if mo_coeffs_a.ndim == 1:
+            nao = mol_acceptor.nao
+            nmo = mo_coeffs_a.shape[0] // nao
+            mo_coeffs_a = mo_coeffs_a.reshape(nao, nmo)
 
         # Extract pi_A (HOMO) and pi*_A (LUMO)
         pi_A     = mo_coeffs_a[:, ACCEPT_PI_IDX]
