@@ -1,0 +1,254 @@
+#!/usr/bin/env python3
+"""
+Compute Dexter Energy Transfer (DET) orbital overlaps for naphthalene dimer.
+
+Workflow:
+- Donor (T1 geometry, triplet MOs): SOMO-1 = pi_D, SOMO = pi*_D
+- Acceptor (S0 geometry, singlet MOs): HOMO = pi_A, LUMO = pi*_A
+- Scan acceptor along x-axis at 3.5 Å stacking distance
+- Compute S(pi_D, pi_A) and S(pi*_D, pi*_A) at each displacement
+- Compute V_DET ∝ S(pi_D, pi_A) x S(pi*_D, pi*_A)
+
+Usage:
+    python compute_det_overlap.py
+"""
+
+import numpy as np
+import matplotlib.pyplot as plt
+from pyscf import gto
+from pyscf.tools import molden
+
+# ------------------------------------------------------------
+# FILE PATHS
+# ------------------------------------------------------------
+BASE_DIR        = "/nfs/outputs/naphthalene"
+DONOR_XYZ       = f"{BASE_DIR}/naphthalene_b3lyp_6311ppgss_t1_opt.xyz"
+ACCEPTOR_XYZ    = f"{BASE_DIR}/naphthalene_b3lyp_6311ppgss_s0_opt.xyz"
+DONOR_MOLDEN    = f"{BASE_DIR}/naphthalene_camb3lyp_6311ppgss_t1_sp_t1geom.molden.input"
+ACCEPTOR_MOLDEN = f"{BASE_DIR}/naphthalene_camb3lyp_6311ppgss_s0_sp.molden.input"
+
+# ------------------------------------------------------------
+# ORBITAL INDICES (0-based)
+# Donor (triplet, alpha orbitals):
+#   SOMO-1 = alpha orbital 33 = pi_D
+#   SOMO   = alpha orbital 34 = pi*_D
+# Acceptor (singlet):
+#   HOMO   = orbital 33 = pi_A
+#   LUMO   = orbital 34 = pi*_A
+# ------------------------------------------------------------
+DONOR_PI_IDX    = 33   # SOMO-1 = pi_D
+DONOR_PISTAR_IDX = 34  # SOMO   = pi*_D
+ACCEPT_PI_IDX   = 33   # HOMO   = pi_A
+ACCEPT_PISTAR_IDX = 34 # LUMO   = pi*_A
+
+# ------------------------------------------------------------
+# SCAN PARAMETERS
+# ------------------------------------------------------------
+STACK_DISTANCE  = 3.5   # Angstrom, Z separation
+X_START         = 0.0   # Angstrom
+X_END           = 8.0   # Angstrom
+N_POINTS        = 50    # number of x displacement points
+BASIS           = "6-311++G**"
+
+# ------------------------------------------------------------
+# HELPER FUNCTIONS
+# ------------------------------------------------------------
+
+def read_xyz(filepath):
+    """Read xyz file, return list of (element, x, y, z) tuples in Angstrom."""
+    atoms = []
+    with open(filepath) as f:
+        lines = f.readlines()
+    # First line is atom count, second is comment
+    for line in lines[2:]:
+        parts = line.split()
+        if len(parts) == 4:
+            elem = parts[0]
+            x, y, z = float(parts[1]), float(parts[2]), float(parts[3])
+            atoms.append((elem, x, y, z))
+    return atoms
+
+
+def shift_atoms(atoms, dx=0.0, dy=0.0, dz=0.0):
+    """Shift all atoms by (dx, dy, dz)."""
+    return [(e, x+dx, y+dy, z+dz) for e, x, y, z in atoms]
+
+
+def atoms_to_pyscf_str(atoms):
+    """Convert atom list to PySCF atom string."""
+    lines = [f"{e} {x:.8f} {y:.8f} {z:.8f}" for e, x, y, z in atoms]
+    return "; ".join(lines)
+
+
+def build_mol(atoms, basis, charge=0, spin=0):
+    """Build a PySCF molecule object."""
+    mol = gto.Mole()
+    mol.atom = atoms_to_pyscf_str(atoms)
+    mol.basis = basis
+    mol.charge = charge
+    mol.spin = spin
+    mol.verbose = 0
+    mol.build()
+    return mol
+
+
+def get_mo_coeffs_from_molden(molden_file, mol):
+    """
+    Read MO coefficients from a molden file.
+    Returns (mo_coeffs, mo_occs, mo_energies).
+    For unrestricted: returns (alpha_coeffs, beta_coeffs, ...).
+    """
+    with open(molden_file) as f:
+        molden_content = f.read()
+
+    # Check if unrestricted (triplet) or restricted (singlet)
+    is_unrestricted = "Beta" in molden_content or "BETA" in molden_content
+
+    if is_unrestricted:
+        mo_coeffs_a, mo_energy_a, mo_occ_a, mo_coeffs_b, mo_energy_b, mo_occ_b = \
+            molden.load(molden_file, mol)
+        return mo_coeffs_a, mo_occ_a, mo_energy_a, True
+    else:
+        mo_coeffs, mo_energy, mo_occ = molden.load(molden_file, mol)
+        return mo_coeffs, mo_occ, mo_energy, False
+
+
+def compute_mo_overlap(mol_d, mo_d, mol_a, mo_a):
+    """
+    Compute overlap between MO on donor and MO on acceptor.
+
+    S_ij = C_D,i @ S_AO @ C_A,j
+
+    where S_AO is the AO overlap matrix of the combined dimer,
+    and C_D, C_A are MO coefficients on donor and acceptor fragments.
+    """
+    # Build combined dimer molecule
+    donor_atoms   = [(mol_d.atom_symbol(i), *mol_d.atom_coord(i)) 
+                     for i in range(mol_d.natm)]
+    acceptor_atoms = [(mol_a.atom_symbol(i), *mol_a.atom_coord(i)) 
+                      for i in range(mol_a.natm)]
+
+    mol_dimer = gto.Mole()
+    mol_dimer.atom = donor_atoms + acceptor_atoms
+    mol_dimer.basis = BASIS
+    mol_dimer.verbose = 0
+    mol_dimer.unit = "Bohr"  # pyscf internal units are Bohr
+    mol_dimer.build()
+
+    # AO overlap matrix of full dimer
+    S_ao = mol_dimer.intor("int1e_ovlp")
+
+    nao_d = mol_d.nao
+    nao_a = mol_a.nao
+
+    # Extract dimer AO overlap block between donor and acceptor AOs
+    S_da = S_ao[:nao_d, nao_d:]   # shape: (nao_d, nao_a)
+
+    # MO overlap: scalar
+    # mo_d shape: (nao_d,), mo_a shape: (nao_a,)
+    S_mo = mo_d @ S_da @ mo_a
+
+    return S_mo
+
+
+# ------------------------------------------------------------
+# MAIN
+# ------------------------------------------------------------
+
+def main():
+    print("Reading geometries...")
+    donor_atoms_base    = read_xyz(DONOR_XYZ)
+    acceptor_atoms_base = read_xyz(ACCEPTOR_XYZ)
+
+    # Centre donor at origin
+    # Donor is fixed, acceptor is shifted in Z by 3.5 Å and scanned in X
+
+    print("Building donor molecule and reading MOs...")
+    mol_donor = build_mol(donor_atoms_base, BASIS, charge=0, spin=2)
+
+    # Read donor MOs (unrestricted triplet - alpha orbitals)
+    mo_coeffs_d, mo_occ_d, mo_energy_d, is_uhf = \
+        get_mo_coeffs_from_molden(DONOR_MOLDEN, mol_donor)
+
+    # Extract pi_D (SOMO-1) and pi*_D (SOMO) from alpha orbitals
+    pi_D      = mo_coeffs_d[:, DONOR_PI_IDX]
+    pistar_D  = mo_coeffs_d[:, DONOR_PISTAR_IDX]
+
+    print(f"  pi_D    energy: {mo_energy_d[DONOR_PI_IDX]*27.211:.4f} eV")
+    print(f"  pi*_D   energy: {mo_energy_d[DONOR_PISTAR_IDX]*27.211:.4f} eV")
+
+    # ------------------------------------------------------------
+    # X displacement scan
+    # ------------------------------------------------------------
+    x_values   = np.linspace(X_START, X_END, N_POINTS)
+    S_pi       = np.zeros(N_POINTS)
+    S_pistar   = np.zeros(N_POINTS)
+    V_DET      = np.zeros(N_POINTS)
+
+    print(f"\nScanning acceptor along x-axis ({N_POINTS} points)...")
+    for i, dx in enumerate(x_values):
+        print(f"  x = {dx:.2f} Å  ({i+1}/{N_POINTS})", end="\r")
+
+        # Place acceptor at (dx, 0, 3.5 Å) relative to donor
+        acceptor_atoms = shift_atoms(acceptor_atoms_base,
+                                     dx=dx, dy=0.0, dz=STACK_DISTANCE)
+
+        # Build acceptor molecule
+        mol_acceptor = build_mol(acceptor_atoms, BASIS, charge=0, spin=0)
+
+        # Read acceptor MOs (restricted singlet)
+        mo_coeffs_a, mo_occ_a, mo_energy_a, _ = \
+            get_mo_coeffs_from_molden(ACCEPTOR_MOLDEN, mol_acceptor)
+
+        # Extract pi_A (HOMO) and pi*_A (LUMO)
+        pi_A     = mo_coeffs_a[:, ACCEPT_PI_IDX]
+        pistar_A = mo_coeffs_a[:, ACCEPT_PISTAR_IDX]
+
+        # Compute overlaps
+        S_pi[i]     = compute_mo_overlap(mol_donor, pi_D,
+                                          mol_acceptor, pi_A)
+        S_pistar[i] = compute_mo_overlap(mol_donor, pistar_D,
+                                          mol_acceptor, pistar_A)
+
+        # V_DET proportional to product of overlaps
+        V_DET[i] = S_pi[i] * S_pistar[i]
+
+    print("\nDone.")
+
+    # ------------------------------------------------------------
+    # SAVE RESULTS
+    # ------------------------------------------------------------
+    output_file = f"{BASE_DIR}/det_overlaps.csv"
+    header = "x_displacement_Ang,S_pi_D_pi_A,S_pistar_D_pistar_A,V_DET_product"
+    data   = np.column_stack([x_values, S_pi, S_pistar, V_DET])
+    np.savetxt(output_file, data, delimiter=",", header=header)
+    print(f"Results saved to: {output_file}")
+
+    # ------------------------------------------------------------
+    # PLOT
+    # ------------------------------------------------------------
+    fig, axes = plt.subplots(3, 1, figsize=(8, 10), sharex=True)
+
+    axes[0].plot(x_values, S_pi, "b-o", markersize=3)
+    axes[0].set_ylabel("S(π_D, π_A)")
+    axes[0].axhline(0, color="k", linewidth=0.5)
+    axes[0].set_title("Naphthalene Dimer DET Orbital Overlaps")
+
+    axes[1].plot(x_values, S_pistar, "r-o", markersize=3)
+    axes[1].set_ylabel("S(π*_D, π*_A)")
+    axes[1].axhline(0, color="k", linewidth=0.5)
+
+    axes[2].plot(x_values, np.abs(V_DET), "g-o", markersize=3)
+    axes[2].set_ylabel("|V_DET| ∝ |S·S*|")
+    axes[2].set_xlabel("x displacement (Å)")
+    axes[2].axhline(0, color="k", linewidth=0.5)
+
+    plt.tight_layout()
+    plot_file = f"{BASE_DIR}/det_overlaps.png"
+    plt.savefig(plot_file, dpi=150)
+    print(f"Plot saved to: {plot_file}")
+    plt.show()
+
+
+if __name__ == "__main__":
+    main()
