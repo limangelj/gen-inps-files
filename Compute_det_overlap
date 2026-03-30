@@ -49,6 +49,8 @@ X_START        = 0.0   # Angstrom
 X_END          = 8.0   # Angstrom
 N_POINTS       = 50    # number of x displacement points
 BASIS          = "6-311++G**"
+KAPPA          = 24.0  # eV, proportionality constant from Bai et al. 2020
+                       # fitted for naphthalene dimer at 3.5 Å stacking
 
 # ------------------------------------------------------------
 # HELPER FUNCTIONS
@@ -260,7 +262,7 @@ def main():
     # Visualise dimer geometry before scan
     # ------------------------------------------------------------
     print("\nVisualising dimer geometry...")
-    for dx_vis in [0.0, 1.5, 2.7, 3.5, 4.2, 5.5, 8]:
+    for dx_vis in [0.0, 1.5, 4.0]:
         acceptor_vis = shift_atoms(acceptor_atoms_base,
                                    dx=dx_vis, dy=0.0, dz=STACK_DISTANCE)
         visualize_dimer(
@@ -271,10 +273,11 @@ def main():
     # ------------------------------------------------------------
     # X displacement scan
     # ------------------------------------------------------------
-    x_values = np.linspace(X_START, X_END, N_POINTS)
-    S_pi     = np.zeros(N_POINTS)
-    S_pistar = np.zeros(N_POINTS)
-    V_DET    = np.zeros(N_POINTS)
+    x_values  = np.linspace(X_START, X_END, N_POINTS)
+    S_pi      = np.zeros(N_POINTS)
+    S_pistar  = np.zeros(N_POINTS)
+    V_DET     = np.zeros(N_POINTS)
+    V_DET_eV  = np.zeros(N_POINTS)
 
     print(f"\nScanning acceptor along x-axis ({N_POINTS} points)...")
     for i, dx in enumerate(x_values):
@@ -299,6 +302,7 @@ def main():
         S_pi[i]     = compute_mo_overlap(mol_donor, pi_D, mol_acceptor, pi_A)
         S_pistar[i] = compute_mo_overlap(mol_donor, pistar_D, mol_acceptor, pistar_A)
         V_DET[i]    = S_pi[i] * S_pistar[i]
+        V_DET_eV[i] = KAPPA * V_DET[i]
 
     print("\nDone.")
 
@@ -306,8 +310,8 @@ def main():
     # SAVE RESULTS
     # ------------------------------------------------------------
     output_file = f"{BASE_DIR}/det_overlaps.csv"
-    header = "x_displacement_Ang,S_pi_D_pi_A,S_pistar_D_pistar_A,V_DET_product"
-    data   = np.column_stack([x_values, S_pi, S_pistar, V_DET])
+    header = "x_displacement_Ang,S_pi_D_pi_A,S_pistar_D_pistar_A,V_DET_product,V_DET_eV"
+    data   = np.column_stack([x_values, S_pi, S_pistar, V_DET, V_DET_eV])
     np.savetxt(output_file, data, delimiter=",", header=header)
     print(f"Results saved to: {output_file}")
 
@@ -319,17 +323,16 @@ def main():
     axes[0].plot(x_values, S_pi, "b-o", markersize=3)
     axes[0].set_ylabel(r"$S(\pi_D, \pi_A)$")
     axes[0].axhline(0, color="k", linewidth=0.5)
-    axes[0].set_title("Stacked Naphthalene Molecules DET Orbital Overlaps")
+    axes[0].set_title("Stacked Naphthalenes DET Orbital Overlaps")
 
     axes[1].plot(x_values, S_pistar, "r-o", markersize=3)
     axes[1].set_ylabel(r"$S(\pi^*_D, \pi^*_A)$")
     axes[1].axhline(0, color="k", linewidth=0.5)
 
-    axes[2].semilogy(x_values, np.abs(V_DET), "g-o", markersize=3)
-    axes[2].set_ylabel(r"DET Coupling $\propto |S \cdot S^*|$")
+    axes[2].semilogy(x_values, np.abs(V_DET_eV), "g-o", markersize=3)
+    axes[2].set_ylabel(r"$|\kappa S(\pi_D,\pi_A)\cdot S(\pi^*_D,\pi^*_A)|$ (eV)")
     axes[2].set_xlabel("x displacement (Å)")
     
-
     plt.tight_layout()
     plot_file = f"{BASE_DIR}/det_overlaps.png"
     plt.savefig(plot_file, dpi=150)
