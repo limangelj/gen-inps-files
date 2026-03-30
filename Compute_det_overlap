@@ -15,11 +15,13 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 from pyscf import gto
 from pyscf.tools import molden
+import subprocess
 
 # ------------------------------------------------------------
 # FILE PATHS
 # ------------------------------------------------------------
-BASE_DIR        = "/nfs/outputs/naphthalene"
+BASE_DIR    = "/nfs/outputs/naphthalene"
+GCS_BUCKET  = "gs://orca_bucket/angel/"
 DONOR_XYZ       = f"{BASE_DIR}/naphthalene_b3lyp_6311ppgss_t1_opt.xyz"
 ACCEPTOR_XYZ    = f"{BASE_DIR}/naphthalene_b3lyp_6311ppgss_s0_opt.xyz"
 DONOR_MOLDEN    = f"{BASE_DIR}/naphthalene_camb3lyp_6311ppgss_t1_sp_t1geom.molden.input"
@@ -204,6 +206,21 @@ def compute_mo_overlap(mol_d, mo_d, mol_a, mo_a):
     return S_mo
 
 
+def upload_to_gcs(local_dir, gcs_bucket):
+    """
+    Upload all .png and .csv files from local_dir to GCS bucket using gsutil.
+    """
+    print(f"\nUploading results to {gcs_bucket}...")
+    for pattern in ["*.png", "*.csv"]:
+        cmd = ["gsutil", "-m", "cp", f"{local_dir}/{pattern}", gcs_bucket]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode == 0:
+            print(f"  Uploaded {pattern} successfully")
+        else:
+            print(f"  Warning: upload of {pattern} failed")
+            print(f"  {result.stderr.strip()}")
+
+
 # ------------------------------------------------------------
 # MAIN
 # ------------------------------------------------------------
@@ -318,6 +335,11 @@ def main():
     plt.savefig(plot_file, dpi=150)
     print(f"Plot saved to: {plot_file}")
     plt.show()
+
+    # ------------------------------------------------------------
+    # UPLOAD TO GCS
+    # ------------------------------------------------------------
+    upload_to_gcs(BASE_DIR, GCS_BUCKET)
 
 
 if __name__ == "__main__":
