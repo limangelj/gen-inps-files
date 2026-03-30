@@ -260,7 +260,7 @@ def main():
     # Visualise dimer geometry before scan
     # ------------------------------------------------------------
     print("\nVisualising dimer geometry...")
-    for dx_vis in [0.0, 1.5, 4.0]:
+    for dx_vis in [0.0, 1.5, 2.7, 3.5, 4.2, 5.5, 8]:
         acceptor_vis = shift_atoms(acceptor_atoms_base,
                                    dx=dx_vis, dy=0.0, dz=STACK_DISTANCE)
         visualize_dimer(
