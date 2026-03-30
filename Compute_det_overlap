@@ -34,19 +34,19 @@ ACCEPTOR_MOLDEN = f"{BASE_DIR}/naphthalene_camb3lyp_6311ppgss_s0_sp.molden.input
 #   HOMO   = orbital 33 = pi_A
 #   LUMO   = orbital 34 = pi*_A
 # ------------------------------------------------------------
-DONOR_PI_IDX    = 33   
-DONOR_PISTAR_IDX = 34  
-ACCEPT_PI_IDX   = 33   
+DONOR_PI_IDX      = 33
+DONOR_PISTAR_IDX  = 34
+ACCEPT_PI_IDX     = 33
 ACCEPT_PISTAR_IDX = 34
 
 # ------------------------------------------------------------
 # SCAN PARAMETERS
 # ------------------------------------------------------------
-STACK_DISTANCE  = 3.5   # Angstrom, Z separation
-X_START         = 0.0   # Angstrom
-X_END           = 8.0   # Angstrom
-N_POINTS        = 50    # number of x displacement points
-BASIS           = "6-311++G**"
+STACK_DISTANCE = 3.5   # Angstrom, Z separation
+X_START        = 0.0   # Angstrom
+X_END          = 8.0   # Angstrom
+N_POINTS       = 50    # number of x displacement points
+BASIS          = "6-311++G**"
 
 # ------------------------------------------------------------
 # HELPER FUNCTIONS
@@ -57,7 +57,6 @@ def read_xyz(filepath):
     atoms = []
     with open(filepath) as f:
         lines = f.readlines()
-    # First line is atom count, second is comment
     for line in lines[2:]:
         parts = line.split()
         if len(parts) == 4:
@@ -65,6 +64,19 @@ def read_xyz(filepath):
             x, y, z = float(parts[1]), float(parts[2]), float(parts[3])
             atoms.append((elem, x, y, z))
     return atoms
+
+
+def centre_atoms(atoms):
+    """
+    Translate atoms so their centroid lies at the XY origin (Z unchanged).
+    Ensures both donor and acceptor are centred at x=0, y=0 before stacking,
+    so x=0 displacement truly means perfectly eclipsed geometry.
+    """
+    xs = [x for _, x, _, _ in atoms]
+    ys = [y for _, _, y, _ in atoms]
+    cx = sum(xs) / len(xs)
+    cy = sum(ys) / len(ys)
+    return [(e, x-cx, y-cy, z) for e, x, y, z in atoms]
 
 
 def shift_atoms(atoms, dx=0.0, dy=0.0, dz=0.0):
@@ -97,24 +109,22 @@ def get_mo_coeffs_from_molden(molden_file, mol):
       UHF: shape (2, nao, nmo) — tuple of two arrays
       RHF: shape (nao, nmo)    — single array
     """
-    result = molden.load(molden_file)
-
+    result   = molden.load(molden_file)
     mo_energy = result[1]
     mo_coeff  = result[2]
     mo_occ    = result[3]
 
-    # Determine UHF vs RHF by checking if mo_coeff is a tuple/has 3 dims
     mo_coeff_arr = np.array(mo_coeff)
     is_uhf = mo_coeff_arr.ndim == 3  # UHF: (2, nao, nmo)
 
     if is_uhf:
-        coeffs   = mo_coeff_arr[0]          # alpha coeffs (nao, nmo)
-        energies = np.array(mo_energy)[0]   # alpha energies (nmo,)
-        occs     = np.array(mo_occ)[0]      # alpha occupations (nmo,)
+        coeffs   = mo_coeff_arr[0]         # alpha coeffs (nao, nmo)
+        energies = np.array(mo_energy)[0]  # alpha energies (nmo,)
+        occs     = np.array(mo_occ)[0]     # alpha occupations (nmo,)
     else:
-        coeffs   = mo_coeff_arr             # (nao, nmo)
-        energies = np.array(mo_energy)      # (nmo,)
-        occs     = np.array(mo_occ)         # (nmo,)
+        coeffs   = mo_coeff_arr            # (nao, nmo)
+        energies = np.array(mo_energy)     # (nmo,)
+        occs     = np.array(mo_occ)        # (nmo,)
 
     return coeffs, occs, energies, is_uhf
 
@@ -127,29 +137,22 @@ def visualize_dimer(donor_atoms, acceptor_atoms, x_displacement, save_path):
     fig = plt.figure(figsize=(10, 8))
     ax = fig.add_subplot(111, projection="3d")
 
-    # Colour by element
-    elem_colors = {"C": "gray", "H": "white"}
-
-    # Plot donor atoms
     for elem, x, y, z in donor_atoms:
-        color = elem_colors.get(elem, "gray")
         size = 200 if elem == "C" else 80
         ax.scatter(x, y, z, c="blue", s=size, alpha=0.8,
                    edgecolors="darkblue", linewidths=0.5)
 
-    # Plot acceptor atoms
     for elem, x, y, z in acceptor_atoms:
         size = 200 if elem == "C" else 80
         ax.scatter(x, y, z, c="red", s=size, alpha=0.8,
                    edgecolors="darkred", linewidths=0.5)
 
-    # Draw bonds for donor (C-C only, distance < 1.6 Å)
-    donor_carbons = [(x, y, z) for e, x, y, z in donor_atoms if e == "C"]
+    donor_carbons    = [(x, y, z) for e, x, y, z in donor_atoms if e == "C"]
     acceptor_carbons = [(x, y, z) for e, x, y, z in acceptor_atoms if e == "C"]
 
-    for atoms, color in [(donor_carbons, "blue"), (acceptor_carbons, "red")]:
-        for i, (x1, y1, z1) in enumerate(atoms):
-            for x2, y2, z2 in atoms[i+1:]:
+    for carbons, color in [(donor_carbons, "blue"), (acceptor_carbons, "red")]:
+        for i, (x1, y1, z1) in enumerate(carbons):
+            for x2, y2, z2 in carbons[i+1:]:
                 dist = np.sqrt((x2-x1)**2 + (y2-y1)**2 + (z2-z1)**2)
                 if dist < 1.6:
                     ax.plot([x1, x2], [y1, y2], [z1, z2],
@@ -159,15 +162,14 @@ def visualize_dimer(donor_atoms, acceptor_atoms, x_displacement, save_path):
     ax.set_ylabel("Y (Å)")
     ax.set_zlabel("Z (Å)")
     ax.set_title(f"Stacked Naphthalenes — x displacement = {x_displacement:.2f} Å\n"
-                 f"Blue = Donor, Red = Acceptor, Z-stack = {STACK_DISTANCE} Å")
+                 f"Blue = Donor (T1), Red = Acceptor (S0), Z-stack = {STACK_DISTANCE} Å")
 
-    # Add legend
     from matplotlib.lines import Line2D
     legend_elements = [
         Line2D([0], [0], marker="o", color="w", markerfacecolor="blue",
-               markersize=10, label="Donor (fixed)"),
+               markersize=10, label="Donor (T1, fixed)"),
         Line2D([0], [0], marker="o", color="w", markerfacecolor="red",
-               markersize=10, label=f"Acceptor (x={x_displacement:.1f} Å)"),
+               markersize=10, label=f"Acceptor (S0, x={x_displacement:.1f} Å)"),
     ]
     ax.legend(handles=legend_elements)
 
@@ -180,13 +182,8 @@ def visualize_dimer(donor_atoms, acceptor_atoms, x_displacement, save_path):
 def compute_mo_overlap(mol_d, mo_d, mol_a, mo_a):
     """
     Compute overlap between MO on donor and MO on acceptor.
-
     S_ij = C_D,i @ S_AO @ C_A,j
-
-    where S_AO is the AO overlap matrix of the combined dimer,
-    and C_D, C_A are MO coefficients on donor and acceptor fragments.
     """
-    # Build combined dimer molecule
     donor_atoms   = [(mol_d.atom_symbol(i), *mol_d.atom_coord(i))
                      for i in range(mol_d.natm)]
     acceptor_atoms = [(mol_a.atom_symbol(i), *mol_a.atom_coord(i))
@@ -199,17 +196,10 @@ def compute_mo_overlap(mol_d, mo_d, mol_a, mo_a):
     mol_dimer.unit = "Bohr"
     mol_dimer.build()
 
-    # AO overlap matrix of full dimer
-    S_ao = mol_dimer.intor("int1e_ovlp")
-
+    S_ao  = mol_dimer.intor("int1e_ovlp")
     nao_d = mol_d.nao
-    nao_a = mol_a.nao
-
-    # Extract dimer AO overlap block between donor and acceptor AOs
-    S_da = S_ao[:nao_d, nao_d:]   # shape: (nao_d, nao_a)
-
-    # MO overlap: scalar
-    S_mo = mo_d @ S_da @ mo_a
+    S_da  = S_ao[:nao_d, nao_d:]  # off-diagonal block (nao_d, nao_a)
+    S_mo  = mo_d @ S_da @ mo_a
 
     return S_mo
 
@@ -219,43 +209,39 @@ def compute_mo_overlap(mol_d, mo_d, mol_a, mo_a):
 # ------------------------------------------------------------
 
 def main():
-    print("Reading geometries...")
-    donor_atoms_base    = read_xyz(DONOR_XYZ)
-    acceptor_atoms_base = read_xyz(ACCEPTOR_XYZ)
+    print("Reading and centring geometries...")
+    donor_atoms_base    = centre_atoms(read_xyz(DONOR_XYZ))
+    acceptor_atoms_base = centre_atoms(read_xyz(ACCEPTOR_XYZ))
 
-    # Centre donor at origin
-    # Donor is fixed, acceptor is shifted in Z by 3.5 Å and scanned in X
+    # Confirm centroids are at origin after centring
+    d_cx = sum(x for _, x, _, _ in donor_atoms_base) / len(donor_atoms_base)
+    d_cy = sum(y for _, _, y, _ in donor_atoms_base) / len(donor_atoms_base)
+    a_cx = sum(x for _, x, _, _ in acceptor_atoms_base) / len(acceptor_atoms_base)
+    a_cy = sum(y for _, _, y, _ in acceptor_atoms_base) / len(acceptor_atoms_base)
+    print(f"  Donor centroid    (x, y): ({d_cx:.6f}, {d_cy:.6f})")
+    print(f"  Acceptor centroid (x, y): ({a_cx:.6f}, {a_cy:.6f})")
 
-    print("Building donor molecule and reading MOs...")
+    print("\nBuilding donor molecule and reading MOs...")
     mol_donor = build_mol(donor_atoms_base, BASIS, charge=0, spin=2)
 
-    # Read donor MOs (unrestricted triplet - alpha orbitals)
     mo_coeffs_d, mo_occ_d, mo_energy_d, is_uhf = \
         get_mo_coeffs_from_molden(DONOR_MOLDEN, mol_donor)
 
-    # Ensure mo_coeffs_d is 2D (nao x nmo)
     if mo_coeffs_d.ndim == 1:
         nao = mol_donor.nao
         nmo = mo_coeffs_d.shape[0] // nao
         mo_coeffs_d = mo_coeffs_d.reshape(nao, nmo)
 
-    # Extract pi_D (SOMO-1) and pi*_D (SOMO) from alpha orbitals
-    pi_D      = mo_coeffs_d[:, DONOR_PI_IDX]
-    pistar_D  = mo_coeffs_d[:, DONOR_PISTAR_IDX]
+    pi_D     = mo_coeffs_d[:, DONOR_PI_IDX]
+    pistar_D = mo_coeffs_d[:, DONOR_PISTAR_IDX]
 
     print(f"  Donor MO coeffs shape: {mo_coeffs_d.shape}")
     print(f"  pi_D    energy: {mo_energy_d[DONOR_PI_IDX]*27.211:.4f} eV")
     print(f"  pi*_D   energy: {mo_energy_d[DONOR_PISTAR_IDX]*27.211:.4f} eV")
 
     # ------------------------------------------------------------
-    # X displacement scan
+    # Visualise dimer geometry before scan
     # ------------------------------------------------------------
-    x_values   = np.linspace(X_START, X_END, N_POINTS)
-    S_pi       = np.zeros(N_POINTS)
-    S_pistar   = np.zeros(N_POINTS)
-    V_DET      = np.zeros(N_POINTS)
-
-    # Visualise dimer geometry before running scan
     print("\nVisualising dimer geometry...")
     for dx_vis in [0.0, 1.5, 4.0]:
         acceptor_vis = shift_atoms(acceptor_atoms_base,
@@ -265,44 +251,37 @@ def main():
             save_path=f"{BASE_DIR}/dimer_geometry_x{dx_vis:.1f}.png"
         )
 
+    # ------------------------------------------------------------
+    # X displacement scan
+    # ------------------------------------------------------------
+    x_values = np.linspace(X_START, X_END, N_POINTS)
+    S_pi     = np.zeros(N_POINTS)
+    S_pistar = np.zeros(N_POINTS)
+    V_DET    = np.zeros(N_POINTS)
+
     print(f"\nScanning acceptor along x-axis ({N_POINTS} points)...")
     for i, dx in enumerate(x_values):
         print(f"  x = {dx:.2f} Å  ({i+1}/{N_POINTS})", end="\r")
 
-        # Place acceptor at (dx, 0, 3.5 Å) relative to donor
         acceptor_atoms = shift_atoms(acceptor_atoms_base,
                                      dx=dx, dy=0.0, dz=STACK_DISTANCE)
 
-        # Build acceptor molecule
         mol_acceptor = build_mol(acceptor_atoms, BASIS, charge=0, spin=0)
 
-        # Read acceptor MOs (restricted singlet)
         mo_coeffs_a, mo_occ_a, mo_energy_a, _ = \
             get_mo_coeffs_from_molden(ACCEPTOR_MOLDEN, mol_acceptor)
 
-        # Debug print on first iteration only
-        if i == 0:
-            print(f"  Acceptor MO coeffs shape: {mo_coeffs_a.shape}")
-            print(f"  Acceptor MO energy shape: {mo_energy_a.shape}")
-
-        # Ensure mo_coeffs_a is 2D (nao x nmo)
         if mo_coeffs_a.ndim == 1:
             nao = mol_acceptor.nao
             nmo = mo_coeffs_a.shape[0] // nao
             mo_coeffs_a = mo_coeffs_a.reshape(nao, nmo)
 
-        # Extract pi_A (HOMO) and pi*_A (LUMO)
         pi_A     = mo_coeffs_a[:, ACCEPT_PI_IDX]
         pistar_A = mo_coeffs_a[:, ACCEPT_PISTAR_IDX]
 
-        # Compute overlaps
-        S_pi[i]     = compute_mo_overlap(mol_donor, pi_D,
-                                          mol_acceptor, pi_A)
-        S_pistar[i] = compute_mo_overlap(mol_donor, pistar_D,
-                                          mol_acceptor, pistar_A)
-
-        # V_DET proportional to product of overlaps
-        V_DET[i] = S_pi[i] * S_pistar[i]
+        S_pi[i]     = compute_mo_overlap(mol_donor, pi_D, mol_acceptor, pi_A)
+        S_pistar[i] = compute_mo_overlap(mol_donor, pistar_D, mol_acceptor, pistar_A)
+        V_DET[i]    = S_pi[i] * S_pistar[i]
 
     print("\nDone.")
 
@@ -329,10 +308,10 @@ def main():
     axes[1].set_ylabel(r"$S(\pi^*_D, \pi^*_A)$")
     axes[1].axhline(0, color="k", linewidth=0.5)
 
-    # Log scale for V_DET to match Figure 2b of paper
     axes[2].semilogy(x_values, np.abs(V_DET), "g-o", markersize=3)
-    axes[2].set_ylabel("DET Coupling ∝ |S·S*|")
+    axes[2].set_ylabel(r"$|V_{DET}| \propto |S \cdot S^*|$")
     axes[2].set_xlabel("x displacement (Å)")
+    axes[2].set_title(r"$|V_{DET}|$ (log scale)")
 
     plt.tight_layout()
     plot_file = f"{BASE_DIR}/det_overlaps.png"
