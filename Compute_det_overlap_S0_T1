@@ -2,12 +2,12 @@
 """
 Compute Dexter Energy Transfer (DET) orbital overlaps for naphthalene dimer.
 
-Workflow:
-- Donor (T1 geometry, triplet MOs): SOMO-1 = pi_D, SOMO = pi*_D
-- Acceptor (S0 geometry, singlet MOs): HOMO = pi_A, LUMO = pi*_A
-- Scan acceptor along x-axis at 3.5 Å stacking distance
-- Compute S(pi_D, pi_A) and S(pi*_D, pi*_A) at each displacement
-- Compute V_DET ∝ S(pi_D, pi_A) x S(pi*_D, pi*_A)
+Physically rigorous approach — different MOs for donor and acceptor.
+Donor:    T1 opt geometry, triplet SP -> SOMO-1 = pi_D,  SOMO = pi*_D
+Acceptor: S0 opt geometry, singlet SP -> HOMO   = pi_A,  LUMO = pi*_A
+
+This approach is correct for heterodimer systems (e.g. ZnP/PMI)
+and is the more physically rigorous treatment for naphthalene.
 """
 
 import numpy as np
@@ -29,7 +29,7 @@ ACCEPTOR_MOLDEN = f"{BASE_DIR}/naphthalene_camb3lyp_6311ppgss_s0_sp.molden.input
 
 # ------------------------------------------------------------
 # ORBITAL INDICES (0-based)
-# Donor (triplet, alpha orbitals):
+# Donor (triplet):
 #   SOMO-1 = alpha orbital 33 = pi_D
 #   SOMO   = alpha orbital 34 = pi*_D
 # Acceptor (singlet):
@@ -44,20 +44,27 @@ ACCEPT_PISTAR_IDX = 34
 # ------------------------------------------------------------
 # SCAN PARAMETERS
 # ------------------------------------------------------------
-STACK_DISTANCE = 3.5   # Angstrom, Z separation
-X_START        = 0.0   # Angstrom
-X_END          = 8.0   # Angstrom
-N_POINTS       = 50    # number of x displacement points
+STACK_DISTANCE = 3.5
+X_START        = 0.0
+X_END          = 8.0
+N_POINTS       = 50
 BASIS          = "6-311++G**"
-KAPPA          = 24.0  # eV, proportionality constant from Bai et al. 2020
-                       # fitted for naphthalene dimer at 3.5 Å stacking
+KAPPA          = 24.0  # eV, Bai et al. 2020
+
+# ------------------------------------------------------------
+# OUTPUT FILE NAMES
+# ------------------------------------------------------------
+OUTPUT_CSV     = f"{BASE_DIR}/det_overlaps_rigorous.csv"
+OUTPUT_PNG     = f"{BASE_DIR}/det_overlaps_rigorous.png"
+OUTPUT_MO_PNG  = f"{BASE_DIR}/mo_visualisation_rigorous.png"
+OUTPUT_MO_HTML = f"{BASE_DIR}/mo_visualisation_rigorous.html"
+DIMER_PNG_STEM = f"{BASE_DIR}/dimer_geometry_rigorous_x"
 
 # ------------------------------------------------------------
 # HELPER FUNCTIONS
 # ------------------------------------------------------------
 
 def read_xyz(filepath):
-    """Read xyz file, return list of (element, x, y, z) tuples in Angstrom."""
     atoms = []
     with open(filepath) as f:
         lines = f.readlines()
@@ -71,11 +78,6 @@ def read_xyz(filepath):
 
 
 def centre_atoms(atoms):
-    """
-    Translate atoms so their centroid lies at the XY origin (Z unchanged).
-    Ensures both donor and acceptor are centred at x=0, y=0 before stacking,
-    so x=0 displacement truly means perfectly eclipsed geometry.
-    """
     xs = [x for _, x, _, _ in atoms]
     ys = [y for _, _, y, _ in atoms]
     cx = sum(xs) / len(xs)
@@ -84,18 +86,15 @@ def centre_atoms(atoms):
 
 
 def shift_atoms(atoms, dx=0.0, dy=0.0, dz=0.0):
-    """Shift all atoms by (dx, dy, dz)."""
     return [(e, x+dx, y+dy, z+dz) for e, x, y, z in atoms]
 
 
 def atoms_to_pyscf_str(atoms):
-    """Convert atom list to PySCF atom string."""
     lines = [f"{e} {x:.8f} {y:.8f} {z:.8f}" for e, x, y, z in atoms]
     return "; ".join(lines)
 
 
 def build_mol(atoms, basis, charge=0, spin=0):
-    """Build a PySCF molecule object."""
     mol = gto.Mole()
     mol.atom = atoms_to_pyscf_str(atoms)
     mol.basis = basis
@@ -107,37 +106,27 @@ def build_mol(atoms, basis, charge=0, spin=0):
 
 
 def get_mo_coeffs_from_molden(molden_file, mol):
-    """
-    Read MO coefficients from a molden file using PySCF 2.x API.
-    Determines RHF vs UHF by inspecting shape of mo_coeff (result[2]):
-      UHF: shape (2, nao, nmo) — tuple of two arrays
-      RHF: shape (nao, nmo)    — single array
-    """
-    result   = molden.load(molden_file)
+    result    = molden.load(molden_file)
     mo_energy = result[1]
     mo_coeff  = result[2]
     mo_occ    = result[3]
 
     mo_coeff_arr = np.array(mo_coeff)
-    is_uhf = mo_coeff_arr.ndim == 3  # UHF: (2, nao, nmo)
+    is_uhf = mo_coeff_arr.ndim == 3
 
     if is_uhf:
-        coeffs   = mo_coeff_arr[0]         # alpha coeffs (nao, nmo)
-        energies = np.array(mo_energy)[0]  # alpha energies (nmo,)
-        occs     = np.array(mo_occ)[0]     # alpha occupations (nmo,)
+        coeffs   = mo_coeff_arr[0]
+        energies = np.array(mo_energy)[0]
+        occs     = np.array(mo_occ)[0]
     else:
-        coeffs   = mo_coeff_arr            # (nao, nmo)
-        energies = np.array(mo_energy)     # (nmo,)
-        occs     = np.array(mo_occ)        # (nmo,)
+        coeffs   = mo_coeff_arr
+        energies = np.array(mo_energy)
+        occs     = np.array(mo_occ)
 
     return coeffs, occs, energies, is_uhf
 
 
 def visualize_dimer(donor_atoms, acceptor_atoms, x_displacement, save_path):
-    """
-    Plot 3D geometry of donor and acceptor naphthalenes to verify orientation.
-    Donor in blue, acceptor in red.
-    """
     fig = plt.figure(figsize=(10, 8))
     ax = fig.add_subplot(111, projection="3d")
 
@@ -165,7 +154,7 @@ def visualize_dimer(donor_atoms, acceptor_atoms, x_displacement, save_path):
     ax.set_xlabel("X (Å)")
     ax.set_ylabel("Y (Å)")
     ax.set_zlabel("Z (Å)")
-    ax.set_title(f"Stacked Naphthalenes — x displacement = {x_displacement:.2f} Å\n"
+    ax.set_title(f"Stacked Naphthalenes [rigorous mode] — x = {x_displacement:.2f} Å\n"
                  f"Blue = Donor (T1), Red = Acceptor (S0), Z-stack = {STACK_DISTANCE} Å")
 
     from matplotlib.lines import Line2D
@@ -184,12 +173,8 @@ def visualize_dimer(donor_atoms, acceptor_atoms, x_displacement, save_path):
 
 
 def compute_mo_overlap(mol_d, mo_d, mol_a, mo_a):
-    """
-    Compute overlap between MO on donor and MO on acceptor.
-    S_ij = C_D,i @ S_AO @ C_A,j
-    """
-    donor_atoms   = [(mol_d.atom_symbol(i), *mol_d.atom_coord(i))
-                     for i in range(mol_d.natm)]
+    donor_atoms    = [(mol_d.atom_symbol(i), *mol_d.atom_coord(i))
+                      for i in range(mol_d.natm)]
     acceptor_atoms = [(mol_a.atom_symbol(i), *mol_a.atom_coord(i))
                       for i in range(mol_a.natm)]
 
@@ -202,16 +187,13 @@ def compute_mo_overlap(mol_d, mo_d, mol_a, mo_a):
 
     S_ao  = mol_dimer.intor("int1e_ovlp")
     nao_d = mol_d.nao
-    S_da  = S_ao[:nao_d, nao_d:]  # off-diagonal block (nao_d, nao_a)
+    S_da  = S_ao[:nao_d, nao_d:]
     S_mo  = mo_d @ S_da @ mo_a
 
     return S_mo
 
 
 def upload_to_gcs(local_dir, gcs_bucket):
-    """
-    Upload all .png and .csv files from local_dir to GCS bucket using gsutil.
-    """
     print(f"\nUploading results to {gcs_bucket}...")
     for pattern in ["*.png", "*.csv", "*.html"]:
         cmd = ["gsutil", "-m", "cp", f"{local_dir}/{pattern}", gcs_bucket]
@@ -227,50 +209,32 @@ def visualize_mos(mol_d, mo_coeffs_d, mol_a, mo_coeffs_a,
                   donor_pi_idx, donor_pistar_idx,
                   accept_pi_idx, accept_pistar_idx,
                   save_path):
-    """
-    Visualise the four key MOs as 3D isosurfaces using Plotly.
-    Saves an interactive HTML file that can be opened in any browser.
-    Positive lobe = red, negative lobe = blue.
-    """
     import plotly.graph_objects as go
     from plotly.subplots import make_subplots
 
     def eval_mo_on_3d_grid(mol, mo_vec, nx=40, ny=40, nz=40):
-        """
-        Evaluate a single MO on a 3D XYZ grid.
-        Returns (x, y, z, mo_values) as 1D arrays for Plotly.
-        """
-        coords = mol.atom_coords() * 0.529177  # Bohr to Angstrom
-
-        # Grid bounds with padding
+        coords = mol.atom_coords() * 0.529177
         xmin, xmax = coords[:, 0].min() - 2.0, coords[:, 0].max() + 2.0
         ymin, ymax = coords[:, 1].min() - 2.0, coords[:, 1].max() + 2.0
         zmin, zmax = coords[:, 2].min() - 2.0, coords[:, 2].max() + 2.0
-
         x = np.linspace(xmin, xmax, nx)
         y = np.linspace(ymin, ymax, ny)
         z = np.linspace(zmin, zmax, nz)
         xx, yy, zz = np.meshgrid(x, y, z, indexing="ij")
-
-        # Build grid in Bohr
         grid_pts = np.column_stack([
             xx.ravel() / 0.529177,
             yy.ravel() / 0.529177,
             zz.ravel() / 0.529177
         ])
-
-        # Evaluate AO basis on grid and project onto MO
         ao_values = mol.eval_gto("GTOval", grid_pts)
         mo_values = ao_values @ mo_vec
-
-        return (xx.ravel(), yy.ravel(), zz.ravel(),
-                mo_values, x, y, z, (nx, ny, nz))
+        return xx.ravel(), yy.ravel(), zz.ravel(), mo_values
 
     orbitals = [
-        (mol_d, mo_coeffs_d[:, donor_pi_idx],     r"π_D (SOMO-1, Donor)"),
-        (mol_d, mo_coeffs_d[:, donor_pistar_idx],  r"π*_D (SOMO, Donor)"),
-        (mol_a, mo_coeffs_a[:, accept_pi_idx],     r"π_A (HOMO, Acceptor)"),
-        (mol_a, mo_coeffs_a[:, accept_pistar_idx], r"π*_A (LUMO, Acceptor)"),
+        (mol_d, mo_coeffs_d[:, donor_pi_idx],     r"π_D (SOMO-1, Donor T1)"),
+        (mol_d, mo_coeffs_d[:, donor_pistar_idx],  r"π*_D (SOMO, Donor T1)"),
+        (mol_a, mo_coeffs_a[:, accept_pi_idx],     r"π_A (HOMO, Acceptor S0)"),
+        (mol_a, mo_coeffs_a[:, accept_pistar_idx], r"π*_A (LUMO, Acceptor S0)"),
     ]
 
     fig = make_subplots(
@@ -282,48 +246,35 @@ def visualize_mos(mol_d, mo_coeffs_d, mol_a, mo_coeffs_a,
         vertical_spacing=0.1
     )
 
-    positions = [(1, 1), (1, 2), (2, 1), (2, 2)]
-
-    for (row, col), (mol, mo_vec, label) in zip(positions, orbitals):
-        xx, yy, zz, mo_vals, x, y, z, shape = eval_mo_on_3d_grid(mol, mo_vec)
-
-        # Isosurface value — 0.02 is typical for MO visualisation
+    for (row, col), (mol, mo_vec, label) in zip(
+            [(1,1),(1,2),(2,1),(2,2)], orbitals):
+        xx, yy, zz, mo_vals = eval_mo_on_3d_grid(mol, mo_vec)
         isoval = 0.02
-        vmax   = np.abs(mo_vals).max()
-
         fig.add_trace(
             go.Isosurface(
-                x=xx, y=yy, z=zz,
-                value=mo_vals,
-                isomin=-isoval,
-                isomax=isoval,
-                surface_count=2,      # one positive, one negative lobe
-                colorscale="RdBu",
-                showscale=False,
+                x=xx, y=yy, z=zz, value=mo_vals,
+                isomin=-isoval, isomax=isoval,
+                surface_count=2, colorscale="RdBu",
+                showscale=False, opacity=0.6,
                 caps=dict(x_show=False, y_show=False, z_show=False),
-                opacity=0.6,
                 name=label,
-            ),
-            row=row, col=col
+            ), row=row, col=col
         )
 
     fig.update_layout(
-        title="MO Character Verification — 3D Isosurfaces (isovalue = ±0.02)",
-        height=900,
-        width=1100,
+        title="MO Verification [rigorous mode] — 3D Isosurfaces (isovalue = ±0.02)",
+        height=900, width=1100,
     )
 
-    # Save as interactive HTML
     html_path = save_path.replace(".png", ".html")
     fig.write_html(html_path)
     print(f"  3D MO visualisation saved to: {html_path}")
 
-    # Also save static PNG as fallback
     try:
         fig.write_image(save_path)
         print(f"  Static MO visualisation saved to: {save_path}")
     except Exception:
-        print(f"  Note: static PNG not saved (install kaleido: pip install kaleido)")
+        print(f"  Note: install kaleido for PNG export: pip install kaleido")
 
 
 # ------------------------------------------------------------
@@ -331,11 +282,11 @@ def visualize_mos(mol_d, mo_coeffs_d, mol_a, mo_coeffs_a,
 # ------------------------------------------------------------
 
 def main():
+    print("Mode: RIGOROUS (triplet MOs for D, singlet MOs for A)")
     print("Reading and centring geometries...")
     donor_atoms_base    = centre_atoms(read_xyz(DONOR_XYZ))
     acceptor_atoms_base = centre_atoms(read_xyz(ACCEPTOR_XYZ))
 
-    # Confirm centroids are at origin after centring
     d_cx = sum(x for _, x, _, _ in donor_atoms_base) / len(donor_atoms_base)
     d_cy = sum(y for _, _, y, _ in donor_atoms_base) / len(donor_atoms_base)
     a_cx = sum(x for _, x, _, _ in acceptor_atoms_base) / len(acceptor_atoms_base)
@@ -351,32 +302,22 @@ def main():
 
     if mo_coeffs_d.ndim == 1:
         nao = mol_donor.nao
-        nmo = mo_coeffs_d.shape[0] // nao
-        mo_coeffs_d = mo_coeffs_d.reshape(nao, nmo)
+        mo_coeffs_d = mo_coeffs_d.reshape(nao, mo_coeffs_d.shape[0] // nao)
 
     pi_D     = mo_coeffs_d[:, DONOR_PI_IDX]
     pistar_D = mo_coeffs_d[:, DONOR_PISTAR_IDX]
 
     print(f"  Donor MO coeffs shape: {mo_coeffs_d.shape}")
-    print(f"  pi_D    energy: {mo_energy_d[DONOR_PI_IDX]*27.211:.4f} eV")
-    print(f"  pi*_D   energy: {mo_energy_d[DONOR_PISTAR_IDX]*27.211:.4f} eV")
+    print(f"  pi_D   (SOMO-1) energy: {mo_energy_d[DONOR_PI_IDX]*27.211:.4f} eV")
+    print(f"  pi*_D  (SOMO)   energy: {mo_energy_d[DONOR_PISTAR_IDX]*27.211:.4f} eV")
 
-    # ------------------------------------------------------------
-    # Visualise dimer geometry before scan
-    # ------------------------------------------------------------
     print("\nVisualising dimer geometry...")
     for dx_vis in [0.0, 1.5, 4.0]:
         acceptor_vis = shift_atoms(acceptor_atoms_base,
                                    dx=dx_vis, dy=0.0, dz=STACK_DISTANCE)
-        visualize_dimer(
-            donor_atoms_base, acceptor_vis, dx_vis,
-            save_path=f"{BASE_DIR}/dimer_geometry_x{dx_vis:.1f}_s0_t1.png"
-        )
+        visualize_dimer(donor_atoms_base, acceptor_vis, dx_vis,
+                        save_path=f"{DIMER_PNG_STEM}{dx_vis:.1f}.png")
 
-    # ------------------------------------------------------------
-    # Visualise MOs before scan to verify orbital character
-    # Load acceptor at x=0 (eclipsed) for MO visualisation
-    # ------------------------------------------------------------
     print("\nVisualising MOs...")
     acceptor_atoms_vis = shift_atoms(acceptor_atoms_base,
                                      dx=0.0, dy=0.0, dz=STACK_DISTANCE)
@@ -387,23 +328,22 @@ def main():
 
     if mo_coeffs_a_vis.ndim == 1:
         nao = mol_acceptor_vis.nao
-        nmo = mo_coeffs_a_vis.shape[0] // nao
-        mo_coeffs_a_vis = mo_coeffs_a_vis.reshape(nao, nmo)
+        mo_coeffs_a_vis = mo_coeffs_a_vis.reshape(
+            nao, mo_coeffs_a_vis.shape[0] // nao)
 
-    print(f"  Acceptor pi_A  energy: {mo_energy_a_vis[ACCEPT_PI_IDX]*27.211:.4f} eV")
-    print(f"  Acceptor pi*_A energy: {mo_energy_a_vis[ACCEPT_PISTAR_IDX]*27.211:.4f} eV")
+    print(f"  Acceptor pi_A  (HOMO) energy: "
+          f"{mo_energy_a_vis[ACCEPT_PI_IDX]*27.211:.4f} eV")
+    print(f"  Acceptor pi*_A (LUMO) energy: "
+          f"{mo_energy_a_vis[ACCEPT_PISTAR_IDX]*27.211:.4f} eV")
 
     visualize_mos(
-        mol_donor,      mo_coeffs_d,
+        mol_donor, mo_coeffs_d,
         mol_acceptor_vis, mo_coeffs_a_vis,
         DONOR_PI_IDX, DONOR_PISTAR_IDX,
         ACCEPT_PI_IDX, ACCEPT_PISTAR_IDX,
-        save_path=f"{BASE_DIR}/mo_visualisation_s0_t1.png"
+        save_path=OUTPUT_MO_PNG
     )
 
-    # ------------------------------------------------------------
-    # X displacement scan
-    # ------------------------------------------------------------
     x_values  = np.linspace(X_START, X_END, N_POINTS)
     S_pi      = np.zeros(N_POINTS)
     S_pistar  = np.zeros(N_POINTS)
@@ -416,16 +356,14 @@ def main():
 
         acceptor_atoms = shift_atoms(acceptor_atoms_base,
                                      dx=dx, dy=0.0, dz=STACK_DISTANCE)
-
         mol_acceptor = build_mol(acceptor_atoms, BASIS, charge=0, spin=0)
 
-        mo_coeffs_a, mo_occ_a, mo_energy_a, _ = \
+        mo_coeffs_a, _, _, _ = \
             get_mo_coeffs_from_molden(ACCEPTOR_MOLDEN, mol_acceptor)
 
         if mo_coeffs_a.ndim == 1:
             nao = mol_acceptor.nao
-            nmo = mo_coeffs_a.shape[0] // nao
-            mo_coeffs_a = mo_coeffs_a.reshape(nao, nmo)
+            mo_coeffs_a = mo_coeffs_a.reshape(nao, mo_coeffs_a.shape[0] // nao)
 
         pi_A     = mo_coeffs_a[:, ACCEPT_PI_IDX]
         pistar_A = mo_coeffs_a[:, ACCEPT_PISTAR_IDX]
@@ -437,24 +375,17 @@ def main():
 
     print("\nDone.")
 
-    # ------------------------------------------------------------
-    # SAVE RESULTS
-    # ------------------------------------------------------------
-    output_file = f"{BASE_DIR}/det_overlaps_s0_t1.csv"
     header = "x_displacement_Ang,S_pi_D_pi_A,S_pistar_D_pistar_A,V_DET_product,V_DET_eV"
     data   = np.column_stack([x_values, S_pi, S_pistar, V_DET, V_DET_eV])
-    np.savetxt(output_file, data, delimiter=",", header=header)
-    print(f"Results saved to: {output_file}")
+    np.savetxt(OUTPUT_CSV, data, delimiter=",", header=header)
+    print(f"Results saved to: {OUTPUT_CSV}")
 
-    # ------------------------------------------------------------
-    # PLOT
-    # ------------------------------------------------------------
     fig, axes = plt.subplots(3, 1, figsize=(8, 10), sharex=True)
 
     axes[0].plot(x_values, S_pi, "b-o", markersize=3)
     axes[0].set_ylabel(r"$S(\pi_D, \pi_A)$")
     axes[0].axhline(0, color="k", linewidth=0.5)
-    axes[0].set_title("Stacked Naphthalene Molecules DET Orbital Overlaps")
+    axes[0].set_title("Stacked Naphthalenes DET Orbital Overlaps)
 
     axes[1].plot(x_values, S_pistar, "r-o", markersize=3)
     axes[1].set_ylabel(r"$S(\pi^*_D, \pi^*_A)$")
@@ -463,17 +394,14 @@ def main():
     axes[2].semilogy(x_values, np.abs(V_DET_eV), "g-o", markersize=3)
     axes[2].set_ylabel(r"$|V_{DET}|$ (eV)")
     axes[2].set_xlabel("x displacement (Å)")
-    axes[2].set_title(r"$|V_{DET}| = \kappa \times |S \cdot S^*|$, $\kappa$ = 24 eV (log scale)")
+    axes[2].set_title(r"$|V_{DET}| = \kappa \times |S \cdot S^*|$, "
+                      r"$\kappa$ = 24 eV (log scale)")
 
     plt.tight_layout()
-    plot_file = f"{BASE_DIR}/det_overlaps_s0_t1.png"
-    plt.savefig(plot_file, dpi=150)
-    print(f"Plot saved to: {plot_file}")
+    plt.savefig(OUTPUT_PNG, dpi=150)
+    print(f"Plot saved to: {OUTPUT_PNG}")
     plt.show()
 
-    # ------------------------------------------------------------
-    # UPLOAD TO GCS
-    # ------------------------------------------------------------
     upload_to_gcs(BASE_DIR, GCS_BUCKET)
 
 
