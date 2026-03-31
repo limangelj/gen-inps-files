@@ -1,0 +1,404 @@
+#!/usr/bin/env python3
+"""
+Compute Dexter Energy Transfer (DET) orbital overlaps for naphthalene dimer.
+
+Replicating Bai et al. 2020 Figure 2b.
+Uses same adiabatic triplet MOs for both donor and acceptor.
+Donor:    T1 opt geometry, triplet SP -> SOMO-1 = pi_D,  SOMO = pi*_D
+Acceptor: T1 opt geometry, triplet SP -> SOMO-1 = pi_A,  SOMO = pi*_A
+"""
+
+import numpy as np
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+from pyscf import gto
+from pyscf.tools import molden
+import subprocess
+
+# ------------------------------------------------------------
+# FILE PATHS
+# ------------------------------------------------------------
+BASE_DIR    = "/nfs/outputs/naphthalene"
+GCS_BUCKET  = "gs://orca_bucket/angel/"
+DONOR_XYZ       = f"{BASE_DIR}/naphthalene_b3lyp_6311ppgss_t1_opt.xyz"
+ACCEPTOR_XYZ    = f"{BASE_DIR}/naphthalene_b3lyp_6311ppgss_t1_opt.xyz"
+DONOR_MOLDEN    = f"{BASE_DIR}/naphthalene_camb3lyp_6311ppgss_t1_sp_t1geom.molden.input"
+ACCEPTOR_MOLDEN = f"{BASE_DIR}/naphthalene_camb3lyp_6311ppgss_t1_sp_t1geom.molden.input"
+
+# ------------------------------------------------------------
+# ORBITAL INDICES (0-based)
+# Both donor and acceptor use same triplet MOs:
+#   SOMO-1 = alpha orbital 33 = pi_D and pi_A
+#   SOMO   = alpha orbital 34 = pi*_D and pi*_A
+# ------------------------------------------------------------
+DONOR_PI_IDX      = 33
+DONOR_PISTAR_IDX  = 34
+ACCEPT_PI_IDX     = 33
+ACCEPT_PISTAR_IDX = 34
+
+# ------------------------------------------------------------
+# SCAN PARAMETERS
+# ------------------------------------------------------------
+STACK_DISTANCE = 3.5
+X_START        = 0.0
+X_END          = 8.0
+N_POINTS       = 50
+BASIS          = "6-311++G**"
+KAPPA          = 24.0  # eV, Bai et al. 2020
+
+# ------------------------------------------------------------
+# OUTPUT FILE NAMES
+# ------------------------------------------------------------
+OUTPUT_CSV     = f"{BASE_DIR}/det_overlaps_paper.csv"
+OUTPUT_PNG     = f"{BASE_DIR}/det_overlaps_paper.png"
+OUTPUT_MO_PNG  = f"{BASE_DIR}/mo_visualisation_paper.png"
+OUTPUT_MO_HTML = f"{BASE_DIR}/mo_visualisation_paper.html"
+DIMER_PNG_STEM = f"{BASE_DIR}/dimer_geometry_paper_x"
+
+# ------------------------------------------------------------
+# HELPER FUNCTIONS
+# ------------------------------------------------------------
+
+def read_xyz(filepath):
+    atoms = []
+    with open(filepath) as f:
+        lines = f.readlines()
+    for line in lines[2:]:
+        parts = line.split()
+        if len(parts) == 4:
+            elem = parts[0]
+            x, y, z = float(parts[1]), float(parts[2]), float(parts[3])
+            atoms.append((elem, x, y, z))
+    return atoms
+
+
+def centre_atoms(atoms):
+    xs = [x for _, x, _, _ in atoms]
+    ys = [y for _, _, y, _ in atoms]
+    cx = sum(xs) / len(xs)
+    cy = sum(ys) / len(ys)
+    return [(e, x-cx, y-cy, z) for e, x, y, z in atoms]
+
+
+def shift_atoms(atoms, dx=0.0, dy=0.0, dz=0.0):
+    return [(e, x+dx, y+dy, z+dz) for e, x, y, z in atoms]
+
+
+def atoms_to_pyscf_str(atoms):
+    lines = [f"{e} {x:.8f} {y:.8f} {z:.8f}" for e, x, y, z in atoms]
+    return "; ".join(lines)
+
+
+def build_mol(atoms, basis, charge=0, spin=0):
+    mol = gto.Mole()
+    mol.atom = atoms_to_pyscf_str(atoms)
+    mol.basis = basis
+    mol.charge = charge
+    mol.spin = spin
+    mol.verbose = 0
+    mol.build()
+    return mol
+
+
+def get_mo_coeffs_from_molden(molden_file, mol):
+    result    = molden.load(molden_file)
+    mo_energy = result[1]
+    mo_coeff  = result[2]
+    mo_occ    = result[3]
+
+    mo_coeff_arr = np.array(mo_coeff)
+    is_uhf = mo_coeff_arr.ndim == 3
+
+    if is_uhf:
+        coeffs   = mo_coeff_arr[0]
+        energies = np.array(mo_energy)[0]
+        occs     = np.array(mo_occ)[0]
+    else:
+        coeffs   = mo_coeff_arr
+        energies = np.array(mo_energy)
+        occs     = np.array(mo_occ)
+
+    return coeffs, occs, energies, is_uhf
+
+
+def visualize_dimer(donor_atoms, acceptor_atoms, x_displacement, save_path):
+    fig = plt.figure(figsize=(10, 8))
+    ax = fig.add_subplot(111, projection="3d")
+
+    for elem, x, y, z in donor_atoms:
+        size = 200 if elem == "C" else 80
+        ax.scatter(x, y, z, c="blue", s=size, alpha=0.8,
+                   edgecolors="darkblue", linewidths=0.5)
+
+    for elem, x, y, z in acceptor_atoms:
+        size = 200 if elem == "C" else 80
+        ax.scatter(x, y, z, c="red", s=size, alpha=0.8,
+                   edgecolors="darkred", linewidths=0.5)
+
+    donor_carbons    = [(x, y, z) for e, x, y, z in donor_atoms if e == "C"]
+    acceptor_carbons = [(x, y, z) for e, x, y, z in acceptor_atoms if e == "C"]
+
+    for carbons, color in [(donor_carbons, "blue"), (acceptor_carbons, "red")]:
+        for i, (x1, y1, z1) in enumerate(carbons):
+            for x2, y2, z2 in carbons[i+1:]:
+                dist = np.sqrt((x2-x1)**2 + (y2-y1)**2 + (z2-z1)**2)
+                if dist < 1.6:
+                    ax.plot([x1, x2], [y1, y2], [z1, z2],
+                            color=color, linewidth=1.5, alpha=0.7)
+
+    ax.set_xlabel("X (Å)")
+    ax.set_ylabel("Y (Å)")
+    ax.set_zlabel("Z (Å)")
+    ax.set_title(f"Stacked Naphthalenes [paper mode] — x = {x_displacement:.2f} Å\n"
+                 f"Blue = Donor (T1), Red = Acceptor (T1), Z-stack = {STACK_DISTANCE} Å")
+
+    from matplotlib.lines import Line2D
+    legend_elements = [
+        Line2D([0], [0], marker="o", color="w", markerfacecolor="blue",
+               markersize=10, label="Donor (T1, fixed)"),
+        Line2D([0], [0], marker="o", color="w", markerfacecolor="red",
+               markersize=10, label=f"Acceptor (T1, x={x_displacement:.1f} Å)"),
+    ]
+    ax.legend(handles=legend_elements)
+
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=150)
+    print(f"  Dimer geometry saved to: {save_path}")
+    plt.close()
+
+
+def compute_mo_overlap(mol_d, mo_d, mol_a, mo_a):
+    donor_atoms    = [(mol_d.atom_symbol(i), *mol_d.atom_coord(i))
+                      for i in range(mol_d.natm)]
+    acceptor_atoms = [(mol_a.atom_symbol(i), *mol_a.atom_coord(i))
+                      for i in range(mol_a.natm)]
+
+    mol_dimer = gto.Mole()
+    mol_dimer.atom = donor_atoms + acceptor_atoms
+    mol_dimer.basis = BASIS
+    mol_dimer.verbose = 0
+    mol_dimer.unit = "Bohr"
+    mol_dimer.build()
+
+    S_ao  = mol_dimer.intor("int1e_ovlp")
+    nao_d = mol_d.nao
+    S_da  = S_ao[:nao_d, nao_d:]
+    S_mo  = mo_d @ S_da @ mo_a
+
+    return S_mo
+
+
+def upload_to_gcs(local_dir, gcs_bucket):
+    print(f"\nUploading results to {gcs_bucket}...")
+    for pattern in ["*.png", "*.csv", "*.html"]:
+        cmd = ["gsutil", "-m", "cp", f"{local_dir}/{pattern}", gcs_bucket]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode == 0:
+            print(f"  Uploaded {pattern} successfully")
+        else:
+            print(f"  Warning: upload of {pattern} failed")
+            print(f"  {result.stderr.strip()}")
+
+
+def visualize_mos(mol_d, mo_coeffs_d, mol_a, mo_coeffs_a,
+                  donor_pi_idx, donor_pistar_idx,
+                  accept_pi_idx, accept_pistar_idx,
+                  save_path):
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+
+    def eval_mo_on_3d_grid(mol, mo_vec, nx=40, ny=40, nz=40):
+        coords = mol.atom_coords() * 0.529177
+        xmin, xmax = coords[:, 0].min() - 2.0, coords[:, 0].max() + 2.0
+        ymin, ymax = coords[:, 1].min() - 2.0, coords[:, 1].max() + 2.0
+        zmin, zmax = coords[:, 2].min() - 2.0, coords[:, 2].max() + 2.0
+        x = np.linspace(xmin, xmax, nx)
+        y = np.linspace(ymin, ymax, ny)
+        z = np.linspace(zmin, zmax, nz)
+        xx, yy, zz = np.meshgrid(x, y, z, indexing="ij")
+        grid_pts = np.column_stack([
+            xx.ravel() / 0.529177,
+            yy.ravel() / 0.529177,
+            zz.ravel() / 0.529177
+        ])
+        ao_values = mol.eval_gto("GTOval", grid_pts)
+        mo_values = ao_values @ mo_vec
+        return xx.ravel(), yy.ravel(), zz.ravel(), mo_values
+
+    orbitals = [
+        (mol_d, mo_coeffs_d[:, donor_pi_idx],     r"π_D (SOMO-1, Donor)"),
+        (mol_d, mo_coeffs_d[:, donor_pistar_idx],  r"π*_D (SOMO, Donor)"),
+        (mol_a, mo_coeffs_a[:, accept_pi_idx],     r"π_A (SOMO-1, Acceptor)"),
+        (mol_a, mo_coeffs_a[:, accept_pistar_idx], r"π*_A (SOMO, Acceptor)"),
+    ]
+
+    fig = make_subplots(
+        rows=2, cols=2,
+        subplot_titles=[orb[2] for orb in orbitals],
+        specs=[[{"type": "volume"}, {"type": "volume"}],
+               [{"type": "volume"}, {"type": "volume"}]],
+        horizontal_spacing=0.05,
+        vertical_spacing=0.1
+    )
+
+    for (row, col), (mol, mo_vec, label) in zip(
+            [(1,1),(1,2),(2,1),(2,2)], orbitals):
+        xx, yy, zz, mo_vals = eval_mo_on_3d_grid(mol, mo_vec)
+        isoval = 0.02
+        fig.add_trace(
+            go.Isosurface(
+                x=xx, y=yy, z=zz, value=mo_vals,
+                isomin=-isoval, isomax=isoval,
+                surface_count=2, colorscale="RdBu",
+                showscale=False, opacity=0.6,
+                caps=dict(x_show=False, y_show=False, z_show=False),
+                name=label,
+            ), row=row, col=col
+        )
+
+    fig.update_layout(
+        title="MO Verification [paper mode] — 3D Isosurfaces (isovalue = ±0.02)",
+        height=900, width=1100,
+    )
+
+    html_path = save_path.replace(".png", ".html")
+    fig.write_html(html_path)
+    print(f"  3D MO visualisation saved to: {html_path}")
+
+    try:
+        fig.write_image(save_path)
+        print(f"  Static MO visualisation saved to: {save_path}")
+    except Exception:
+        print(f"  Note: install kaleido for PNG export: pip install kaleido")
+
+
+# ------------------------------------------------------------
+# MAIN
+# ------------------------------------------------------------
+
+def main():
+    print(f"Mode: PAPER REPLICATION (Bai et al. 2020 Fig. 2b)")
+    print("Reading and centring geometries...")
+    donor_atoms_base    = centre_atoms(read_xyz(DONOR_XYZ))
+    acceptor_atoms_base = centre_atoms(read_xyz(ACCEPTOR_XYZ))
+
+    d_cx = sum(x for _, x, _, _ in donor_atoms_base) / len(donor_atoms_base)
+    d_cy = sum(y for _, _, y, _ in donor_atoms_base) / len(donor_atoms_base)
+    a_cx = sum(x for _, x, _, _ in acceptor_atoms_base) / len(acceptor_atoms_base)
+    a_cy = sum(y for _, _, y, _ in acceptor_atoms_base) / len(acceptor_atoms_base)
+    print(f"  Donor centroid    (x, y): ({d_cx:.6f}, {d_cy:.6f})")
+    print(f"  Acceptor centroid (x, y): ({a_cx:.6f}, {a_cy:.6f})")
+
+    print("\nBuilding donor molecule and reading MOs...")
+    mol_donor = build_mol(donor_atoms_base, BASIS, charge=0, spin=2)
+
+    mo_coeffs_d, mo_occ_d, mo_energy_d, is_uhf = \
+        get_mo_coeffs_from_molden(DONOR_MOLDEN, mol_donor)
+
+    if mo_coeffs_d.ndim == 1:
+        nao = mol_donor.nao
+        mo_coeffs_d = mo_coeffs_d.reshape(nao, mo_coeffs_d.shape[0] // nao)
+
+    pi_D     = mo_coeffs_d[:, DONOR_PI_IDX]
+    pistar_D = mo_coeffs_d[:, DONOR_PISTAR_IDX]
+
+    print(f"  Donor MO coeffs shape: {mo_coeffs_d.shape}")
+    print(f"  pi_D   (SOMO-1) energy: {mo_energy_d[DONOR_PI_IDX]*27.211:.4f} eV")
+    print(f"  pi*_D  (SOMO)   energy: {mo_energy_d[DONOR_PISTAR_IDX]*27.211:.4f} eV")
+
+    print("\nVisualising dimer geometry...")
+    for dx_vis in [0.0, 1.5, 4.0]:
+        acceptor_vis = shift_atoms(acceptor_atoms_base,
+                                   dx=dx_vis, dy=0.0, dz=STACK_DISTANCE)
+        visualize_dimer(donor_atoms_base, acceptor_vis, dx_vis,
+                        save_path=f"{DIMER_PNG_STEM}{dx_vis:.1f}.png")
+
+    print("\nVisualising MOs...")
+    acceptor_atoms_vis = shift_atoms(acceptor_atoms_base,
+                                     dx=0.0, dy=0.0, dz=STACK_DISTANCE)
+    mol_acceptor_vis = build_mol(acceptor_atoms_vis, BASIS, charge=0, spin=2)
+
+    mo_coeffs_a_vis, _, mo_energy_a_vis, _ = \
+        get_mo_coeffs_from_molden(ACCEPTOR_MOLDEN, mol_acceptor_vis)
+
+    if mo_coeffs_a_vis.ndim == 1:
+        nao = mol_acceptor_vis.nao
+        mo_coeffs_a_vis = mo_coeffs_a_vis.reshape(
+            nao, mo_coeffs_a_vis.shape[0] // nao)
+
+    print(f"  Acceptor pi_A  (SOMO-1) energy: "
+          f"{mo_energy_a_vis[ACCEPT_PI_IDX]*27.211:.4f} eV")
+    print(f"  Acceptor pi*_A (SOMO)   energy: "
+          f"{mo_energy_a_vis[ACCEPT_PISTAR_IDX]*27.211:.4f} eV")
+
+    visualize_mos(
+        mol_donor, mo_coeffs_d,
+        mol_acceptor_vis, mo_coeffs_a_vis,
+        DONOR_PI_IDX, DONOR_PISTAR_IDX,
+        ACCEPT_PI_IDX, ACCEPT_PISTAR_IDX,
+        save_path=OUTPUT_MO_PNG
+    )
+
+    x_values  = np.linspace(X_START, X_END, N_POINTS)
+    S_pi      = np.zeros(N_POINTS)
+    S_pistar  = np.zeros(N_POINTS)
+    V_DET     = np.zeros(N_POINTS)
+    V_DET_eV  = np.zeros(N_POINTS)
+
+    print(f"\nScanning acceptor along x-axis ({N_POINTS} points)...")
+    for i, dx in enumerate(x_values):
+        print(f"  x = {dx:.2f} Å  ({i+1}/{N_POINTS})", end="\r")
+
+        acceptor_atoms = shift_atoms(acceptor_atoms_base,
+                                     dx=dx, dy=0.0, dz=STACK_DISTANCE)
+        mol_acceptor = build_mol(acceptor_atoms, BASIS, charge=0, spin=2)
+
+        mo_coeffs_a, _, _, _ = \
+            get_mo_coeffs_from_molden(ACCEPTOR_MOLDEN, mol_acceptor)
+
+        if mo_coeffs_a.ndim == 1:
+            nao = mol_acceptor.nao
+            mo_coeffs_a = mo_coeffs_a.reshape(nao, mo_coeffs_a.shape[0] // nao)
+
+        pi_A     = mo_coeffs_a[:, ACCEPT_PI_IDX]
+        pistar_A = mo_coeffs_a[:, ACCEPT_PISTAR_IDX]
+
+        S_pi[i]     = compute_mo_overlap(mol_donor, pi_D, mol_acceptor, pi_A)
+        S_pistar[i] = compute_mo_overlap(mol_donor, pistar_D, mol_acceptor, pistar_A)
+        V_DET[i]    = S_pi[i] * S_pistar[i]
+        V_DET_eV[i] = KAPPA * V_DET[i]
+
+    print("\nDone.")
+
+    header = "x_displacement_Ang,S_pi_D_pi_A,S_pistar_D_pistar_A,V_DET_product,V_DET_eV"
+    data   = np.column_stack([x_values, S_pi, S_pistar, V_DET, V_DET_eV])
+    np.savetxt(OUTPUT_CSV, data, delimiter=",", header=header)
+    print(f"Results saved to: {OUTPUT_CSV}")
+
+    fig, axes = plt.subplots(3, 1, figsize=(8, 10), sharex=True)
+
+    axes[0].plot(x_values, S_pi, "b-o", markersize=3)
+    axes[0].set_ylabel(r"$S(\pi_D, \pi_A)$")
+    axes[0].axhline(0, color="k", linewidth=0.5)
+    axes[0].set_title("Stacked Naphthalenes DET Orbital Overlaps)
+
+    axes[1].plot(x_values, S_pistar, "r-o", markersize=3)
+    axes[1].set_ylabel(r"$S(\pi^*_D, \pi^*_A)$")
+    axes[1].axhline(0, color="k", linewidth=0.5)
+
+    axes[2].semilogy(x_values, np.abs(V_DET_eV), "g-o", markersize=3)
+    axes[2].set_ylabel(r"$|V_{DET}|$ (eV)")
+    axes[2].set_xlabel("x displacement (Å)")
+    axes[2].set_title(r"$|V_{DET}| = \kappa \times |S \cdot S^*|$, "
+                      r"$\kappa$ = 24 eV (log scale)")
+
+    plt.tight_layout()
+    plt.savefig(OUTPUT_PNG, dpi=150)
+    print(f"Plot saved to: {OUTPUT_PNG}")
+    plt.show()
+
+    upload_to_gcs(BASE_DIR, GCS_BUCKET)
+
+
+if __name__ == "__main__":
+    main()
