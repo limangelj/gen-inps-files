@@ -166,14 +166,14 @@ def visualize_dimer(donor_atoms, acceptor_atoms, x_displacement, save_path):
     ax.set_ylabel("Y (Å)")
     ax.set_zlabel("Z (Å)")
     ax.set_title(f"Stacked Naphthalenes — x displacement = {x_displacement:.2f} Å\n"
-                 f"Blue = Donor, Red = Acceptor, Z-stack = {STACK_DISTANCE} Å")
+                 f"Blue = Donor (T1), Red = Acceptor (S0), Z-stack = {STACK_DISTANCE} Å")
 
     from matplotlib.lines import Line2D
     legend_elements = [
         Line2D([0], [0], marker="o", color="w", markerfacecolor="blue",
-               markersize=10, label="Donor (fixed)"),
+               markersize=10, label="Donor (T1, fixed)"),
         Line2D([0], [0], marker="o", color="w", markerfacecolor="red",
-               markersize=10, label=f"Acceptor (x={x_displacement:.1f} Å)"),
+               markersize=10, label=f"Acceptor (S0, x={x_displacement:.1f} Å)"),
     ]
     ax.legend(handles=legend_elements)
 
@@ -213,7 +213,7 @@ def upload_to_gcs(local_dir, gcs_bucket):
     Upload all .png and .csv files from local_dir to GCS bucket using gsutil.
     """
     print(f"\nUploading results to {gcs_bucket}...")
-    for pattern in ["*.png", "*.csv"]:
+    for pattern in ["*.png", "*.csv", "*.html"]:
         cmd = ["gsutil", "-m", "cp", f"{local_dir}/{pattern}", gcs_bucket]
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode == 0:
@@ -221,6 +221,109 @@ def upload_to_gcs(local_dir, gcs_bucket):
         else:
             print(f"  Warning: upload of {pattern} failed")
             print(f"  {result.stderr.strip()}")
+
+
+def visualize_mos(mol_d, mo_coeffs_d, mol_a, mo_coeffs_a,
+                  donor_pi_idx, donor_pistar_idx,
+                  accept_pi_idx, accept_pistar_idx,
+                  save_path):
+    """
+    Visualise the four key MOs as 3D isosurfaces using Plotly.
+    Saves an interactive HTML file that can be opened in any browser.
+    Positive lobe = red, negative lobe = blue.
+    """
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+
+    def eval_mo_on_3d_grid(mol, mo_vec, nx=40, ny=40, nz=40):
+        """
+        Evaluate a single MO on a 3D XYZ grid.
+        Returns (x, y, z, mo_values) as 1D arrays for Plotly.
+        """
+        coords = mol.atom_coords() * 0.529177  # Bohr to Angstrom
+
+        # Grid bounds with padding
+        xmin, xmax = coords[:, 0].min() - 2.0, coords[:, 0].max() + 2.0
+        ymin, ymax = coords[:, 1].min() - 2.0, coords[:, 1].max() + 2.0
+        zmin, zmax = coords[:, 2].min() - 2.0, coords[:, 2].max() + 2.0
+
+        x = np.linspace(xmin, xmax, nx)
+        y = np.linspace(ymin, ymax, ny)
+        z = np.linspace(zmin, zmax, nz)
+        xx, yy, zz = np.meshgrid(x, y, z, indexing="ij")
+
+        # Build grid in Bohr
+        grid_pts = np.column_stack([
+            xx.ravel() / 0.529177,
+            yy.ravel() / 0.529177,
+            zz.ravel() / 0.529177
+        ])
+
+        # Evaluate AO basis on grid and project onto MO
+        ao_values = mol.eval_gto("GTOval", grid_pts)
+        mo_values = ao_values @ mo_vec
+
+        return (xx.ravel(), yy.ravel(), zz.ravel(),
+                mo_values, x, y, z, (nx, ny, nz))
+
+    orbitals = [
+        (mol_d, mo_coeffs_d[:, donor_pi_idx],     r"π_D (SOMO-1, Donor)"),
+        (mol_d, mo_coeffs_d[:, donor_pistar_idx],  r"π*_D (SOMO, Donor)"),
+        (mol_a, mo_coeffs_a[:, accept_pi_idx],     r"π_A (HOMO, Acceptor)"),
+        (mol_a, mo_coeffs_a[:, accept_pistar_idx], r"π*_A (LUMO, Acceptor)"),
+    ]
+
+    fig = make_subplots(
+        rows=2, cols=2,
+        subplot_titles=[orb[2] for orb in orbitals],
+        specs=[[{"type": "volume"}, {"type": "volume"}],
+               [{"type": "volume"}, {"type": "volume"}]],
+        horizontal_spacing=0.05,
+        vertical_spacing=0.1
+    )
+
+    positions = [(1, 1), (1, 2), (2, 1), (2, 2)]
+
+    for (row, col), (mol, mo_vec, label) in zip(positions, orbitals):
+        xx, yy, zz, mo_vals, x, y, z, shape = eval_mo_on_3d_grid(mol, mo_vec)
+
+        # Isosurface value — 0.02 is typical for MO visualisation
+        isoval = 0.02
+        vmax   = np.abs(mo_vals).max()
+
+        fig.add_trace(
+            go.Isosurface(
+                x=xx, y=yy, z=zz,
+                value=mo_vals,
+                isomin=-isoval,
+                isomax=isoval,
+                surface_count=2,      # one positive, one negative lobe
+                colorscale="RdBu",
+                showscale=False,
+                caps=dict(x_show=False, y_show=False, z_show=False),
+                opacity=0.6,
+                name=label,
+            ),
+            row=row, col=col
+        )
+
+    fig.update_layout(
+        title="MO Character Verification — 3D Isosurfaces (isovalue = ±0.02)",
+        height=900,
+        width=1100,
+    )
+
+    # Save as interactive HTML
+    html_path = save_path.replace(".png", ".html")
+    fig.write_html(html_path)
+    print(f"  3D MO visualisation saved to: {html_path}")
+
+    # Also save static PNG as fallback
+    try:
+        fig.write_image(save_path)
+        print(f"  Static MO visualisation saved to: {save_path}")
+    except Exception:
+        print(f"  Note: static PNG not saved (install kaleido: pip install kaleido)")
 
 
 # ------------------------------------------------------------
@@ -262,13 +365,41 @@ def main():
     # Visualise dimer geometry before scan
     # ------------------------------------------------------------
     print("\nVisualising dimer geometry...")
-    for dx_vis in [0.0, 1.5, 2.7, 3.5, 4.2, 5.5, 8]:
+    for dx_vis in [0.0, 1.5, 4.0]:
         acceptor_vis = shift_atoms(acceptor_atoms_base,
                                    dx=dx_vis, dy=0.0, dz=STACK_DISTANCE)
         visualize_dimer(
             donor_atoms_base, acceptor_vis, dx_vis,
-            save_path=f"{BASE_DIR}/dimer_geometry_x{dx_vis:.1f}.png"
+            save_path=f"{BASE_DIR}/dimer_geometry_x{dx_vis:.1f}_s0_t1.png"
         )
+
+    # ------------------------------------------------------------
+    # Visualise MOs before scan to verify orbital character
+    # Load acceptor at x=0 (eclipsed) for MO visualisation
+    # ------------------------------------------------------------
+    print("\nVisualising MOs...")
+    acceptor_atoms_vis = shift_atoms(acceptor_atoms_base,
+                                     dx=0.0, dy=0.0, dz=STACK_DISTANCE)
+    mol_acceptor_vis = build_mol(acceptor_atoms_vis, BASIS, charge=0, spin=0)
+
+    mo_coeffs_a_vis, _, mo_energy_a_vis, _ = \
+        get_mo_coeffs_from_molden(ACCEPTOR_MOLDEN, mol_acceptor_vis)
+
+    if mo_coeffs_a_vis.ndim == 1:
+        nao = mol_acceptor_vis.nao
+        nmo = mo_coeffs_a_vis.shape[0] // nao
+        mo_coeffs_a_vis = mo_coeffs_a_vis.reshape(nao, nmo)
+
+    print(f"  Acceptor pi_A  energy: {mo_energy_a_vis[ACCEPT_PI_IDX]*27.211:.4f} eV")
+    print(f"  Acceptor pi*_A energy: {mo_energy_a_vis[ACCEPT_PISTAR_IDX]*27.211:.4f} eV")
+
+    visualize_mos(
+        mol_donor,      mo_coeffs_d,
+        mol_acceptor_vis, mo_coeffs_a_vis,
+        DONOR_PI_IDX, DONOR_PISTAR_IDX,
+        ACCEPT_PI_IDX, ACCEPT_PISTAR_IDX,
+        save_path=f"{BASE_DIR}/mo_visualisation_s0_t1.png"
+    )
 
     # ------------------------------------------------------------
     # X displacement scan
@@ -309,7 +440,7 @@ def main():
     # ------------------------------------------------------------
     # SAVE RESULTS
     # ------------------------------------------------------------
-    output_file = f"{BASE_DIR}/det_overlaps.csv"
+    output_file = f"{BASE_DIR}/det_overlaps_s0_t1.csv"
     header = "x_displacement_Ang,S_pi_D_pi_A,S_pistar_D_pistar_A,V_DET_product,V_DET_eV"
     data   = np.column_stack([x_values, S_pi, S_pistar, V_DET, V_DET_eV])
     np.savetxt(output_file, data, delimiter=",", header=header)
@@ -321,21 +452,21 @@ def main():
     fig, axes = plt.subplots(3, 1, figsize=(8, 10), sharex=True)
 
     axes[0].plot(x_values, S_pi, "b-o", markersize=3)
-    axes[0].set_ylabel(r"$S_{\pi_D, \pi_A}$")
+    axes[0].set_ylabel(r"$S(\pi_D, \pi_A)$")
     axes[0].axhline(0, color="k", linewidth=0.5)
-    axes[0].set_title("Stacked Naphthalenes DET Orbital Overlaps")
+    axes[0].set_title("Stacked Naphthalene Molecules DET Orbital Overlaps")
 
     axes[1].plot(x_values, S_pistar, "r-o", markersize=3)
-    axes[1].set_ylabel(r"$S_{\pi^*_D, \pi^*_A}$")
+    axes[1].set_ylabel(r"$S(\pi^*_D, \pi^*_A)$")
     axes[1].axhline(0, color="k", linewidth=0.5)
 
     axes[2].semilogy(x_values, np.abs(V_DET_eV), "g-o", markersize=3)
     axes[2].set_ylabel(r"$|V_{DET}|$ (eV)")
     axes[2].set_xlabel("x displacement (Å)")
-    axes[2].set_title(r"$|V_{DET}| = |\kappa \cdot S_{\pi_D,\pi_A} \cdot S_{\pi^*_D,\pi^*_A}|$")
-    
+    axes[2].set_title(r"$|V_{DET}| = \kappa \times |S \cdot S^*|$, $\kappa$ = 24 eV (log scale)")
+
     plt.tight_layout()
-    plot_file = f"{BASE_DIR}/det_overlaps.png"
+    plot_file = f"{BASE_DIR}/det_overlaps_s0_t1.png"
     plt.savefig(plot_file, dpi=150)
     print(f"Plot saved to: {plot_file}")
     plt.show()
