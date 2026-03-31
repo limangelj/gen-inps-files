@@ -321,17 +321,18 @@ def main():
     fig, axes = plt.subplots(3, 1, figsize=(8, 10), sharex=True)
 
     axes[0].plot(x_values, S_pi, "b-o", markersize=3)
-    axes[0].set_ylabel(r"$S(\pi_D, \pi_A)$")
+    axes[0].set_ylabel(r"$S_{\pi_D, \pi_A}$")
     axes[0].axhline(0, color="k", linewidth=0.5)
     axes[0].set_title("Stacked Naphthalenes DET Orbital Overlaps")
 
     axes[1].plot(x_values, S_pistar, "r-o", markersize=3)
-    axes[1].set_ylabel(r"$S(\pi^*_D, \pi^*_A)$")
+    axes[1].set_ylabel(r"$S_{\pi^*_D, \pi^*_A}$")
     axes[1].axhline(0, color="k", linewidth=0.5)
 
     axes[2].semilogy(x_values, np.abs(V_DET_eV), "g-o", markersize=3)
-    axes[2].set_ylabel(r"$|\kappa S(\pi_D,\pi_A)\cdot S(\pi^*_D,\pi^*_A)|$ (eV)")
+    axes[2].set_ylabel(r"$|V_{DET}|$ (eV)")
     axes[2].set_xlabel("x displacement (Å)")
+    axes[2].set_title(r"$|V_{DET}| = |\kappa \cdot S_{\pi_D,\pi_A} \cdot S_{\pi^*_D,\pi^*_A}|$")
     
     plt.tight_layout()
     plot_file = f"{BASE_DIR}/det_overlaps.png"
