@@ -186,7 +186,7 @@ def visualize_dimer(donor_atoms, acceptor_atoms, x_displacement, save_path):
     ax.set_xlabel("X (Å)")
     ax.set_ylabel("Y (Å)")
     ax.set_zlabel("Z (Å)")
-    ax.set_title(f"Stacked Naphthalenes [paper mode] — x = {x_displacement:.2f} Å\n"
+    ax.set_title(f"Stacked Naphthalenes (T1-T1) — x = {x_displacement:.2f} Å\n"
                  f"Blue = Donor (T1), Red = Acceptor (T1), Z-stack = {STACK_DISTANCE} Å")
     from matplotlib.lines import Line2D
     legend_elements = [
