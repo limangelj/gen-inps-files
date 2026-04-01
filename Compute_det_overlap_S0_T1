@@ -345,7 +345,7 @@ def visualize_mos(save_path):
         add_skeleton_from_cube(fig, cube_file, row, col)
 
     fig.update_layout(
-        title=f"MO Verification [rigorous mode] — Cube File Isosurfaces "
+        title=f"MO Verification (T1-S0) — Cube File Isosurfaces "
               f"(isovalue = ±{isoval})",
         height=900, width=1100,
     )
