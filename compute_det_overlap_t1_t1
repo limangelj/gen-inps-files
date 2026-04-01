@@ -380,7 +380,7 @@ def main():
     axes[0].plot(x_values, S_pi, "b-o", markersize=3)
     axes[0].set_ylabel(r"$S(\pi_D, \pi_A)$")
     axes[0].axhline(0, color="k", linewidth=0.5)
-    axes[0].set_title("Stacked Naphthalenes DET Orbital Overlaps)
+    axes[0].set_title("Stacked Naphthalenes DET Orbital Overlaps")
 
     axes[1].plot(x_values, S_pistar, "r-o", markersize=3)
     axes[1].set_ylabel(r"$S(\pi^*_D, \pi^*_A)$")
