@@ -351,8 +351,32 @@ def main():
     pistar_D = mo_coeffs_d[:, DONOR_PISTAR_IDX]
 
     print(f"  Donor MO coeffs shape: {mo_coeffs_d.shape}")
-    print(f"  pi_D   (SOMO-1) energy: {mo_energy_d[DONOR_PI_IDX]*27.211:.4f} eV")
-    print(f"  pi*_D  (SOMO)   energy: {mo_energy_d[DONOR_PISTAR_IDX]*27.211:.4f} eV")
+    print(f"  pi_D   (SOMO-1) energy: {mo_energy_d[DONOR_PI_IDX]:.6f} Eh "
+          f"({mo_energy_d[DONOR_PI_IDX]*27.211:.4f} eV)")
+    print(f"  pi*_D  (SOMO)   energy: {mo_energy_d[DONOR_PISTAR_IDX]:.6f} Eh "
+          f"({mo_energy_d[DONOR_PISTAR_IDX]*27.211:.4f} eV)")
+
+    # --- Verify donor orbital indices against ORCA output ---
+    print("\nVerifying donor orbital indices...")
+    EXPECTED_PI_D_EH     = -0.296193  # SOMO-1 from T1 SP ORCA output
+    EXPECTED_PISTAR_D_EH = -0.172635  # SOMO   from T1 SP ORCA output
+    TOLERANCE            =  0.001     # Hartree
+
+    if abs(mo_energy_d[DONOR_PI_IDX] - EXPECTED_PI_D_EH) < TOLERANCE:
+        print(f"  pi_D   index {DONOR_PI_IDX} confirmed ✓  "
+              f"(E = {mo_energy_d[DONOR_PI_IDX]:.6f} Eh)")
+    else:
+        print(f"  WARNING: pi_D energy mismatch at index {DONOR_PI_IDX} — "
+              f"got {mo_energy_d[DONOR_PI_IDX]:.6f} Eh, "
+              f"expected {EXPECTED_PI_D_EH:.6f} Eh")
+
+    if abs(mo_energy_d[DONOR_PISTAR_IDX] - EXPECTED_PISTAR_D_EH) < TOLERANCE:
+        print(f"  pi*_D  index {DONOR_PISTAR_IDX} confirmed ✓  "
+              f"(E = {mo_energy_d[DONOR_PISTAR_IDX]:.6f} Eh)")
+    else:
+        print(f"  WARNING: pi*_D energy mismatch at index {DONOR_PISTAR_IDX} — "
+              f"got {mo_energy_d[DONOR_PISTAR_IDX]:.6f} Eh, "
+              f"expected {EXPECTED_PISTAR_D_EH:.6f} Eh")
 
     print("\nVisualising dimer geometry...")
     for dx_vis in [0.0, 1.5, 4.0]:
@@ -375,9 +399,32 @@ def main():
             nao, mo_coeffs_a_vis.shape[0] // nao)
 
     print(f"  Acceptor pi_A  (HOMO) energy: "
-          f"{mo_energy_a_vis[ACCEPT_PI_IDX]*27.211:.4f} eV")
+          f"{mo_energy_a_vis[ACCEPT_PI_IDX]:.6f} Eh "
+          f"({mo_energy_a_vis[ACCEPT_PI_IDX]*27.211:.4f} eV)")
     print(f"  Acceptor pi*_A (LUMO) energy: "
-          f"{mo_energy_a_vis[ACCEPT_PISTAR_IDX]*27.211:.4f} eV")
+          f"{mo_energy_a_vis[ACCEPT_PISTAR_IDX]:.6f} Eh "
+          f"({mo_energy_a_vis[ACCEPT_PISTAR_IDX]*27.211:.4f} eV)")
+
+    # --- Verify acceptor orbital indices against ORCA output ---
+    print("\nVerifying acceptor orbital indices...")
+    EXPECTED_PI_A_EH     = -0.273588  # HOMO from S0 SP ORCA output
+    EXPECTED_PISTAR_A_EH = -0.008225  # LUMO from S0 SP ORCA output
+
+    if abs(mo_energy_a_vis[ACCEPT_PI_IDX] - EXPECTED_PI_A_EH) < TOLERANCE:
+        print(f"  pi_A   index {ACCEPT_PI_IDX} confirmed ✓  "
+              f"(E = {mo_energy_a_vis[ACCEPT_PI_IDX]:.6f} Eh)")
+    else:
+        print(f"  WARNING: pi_A energy mismatch at index {ACCEPT_PI_IDX} — "
+              f"got {mo_energy_a_vis[ACCEPT_PI_IDX]:.6f} Eh, "
+              f"expected {EXPECTED_PI_A_EH:.6f} Eh")
+
+    if abs(mo_energy_a_vis[ACCEPT_PISTAR_IDX] - EXPECTED_PISTAR_A_EH) < TOLERANCE:
+        print(f"  pi*_A  index {ACCEPT_PISTAR_IDX} confirmed ✓  "
+              f"(E = {mo_energy_a_vis[ACCEPT_PISTAR_IDX]:.6f} Eh)")
+    else:
+        print(f"  WARNING: pi*_A energy mismatch at index {ACCEPT_PISTAR_IDX} — "
+              f"got {mo_energy_a_vis[ACCEPT_PISTAR_IDX]:.6f} Eh, "
+              f"expected {EXPECTED_PISTAR_A_EH:.6f} Eh")
 
     visualize_mos(
         mol_donor, mo_coeffs_d,
@@ -428,8 +475,7 @@ def main():
     axes[0].plot(x_values, S_pi, "b-o", markersize=3)
     axes[0].set_ylabel(r"$S(\pi_D, \pi_A)$")
     axes[0].axhline(0, color="k", linewidth=0.5)
-    axes[0].set_title("Stacked Naphthalenes DET Orbital Overlaps\n"
-                      r"Rigorous — triplet MOs for D, singlet MOs for A")
+    axes[0].set_title("Stacked Naphthalenes DET Orbital Overlaps (T1-S0)")
 
     axes[1].plot(x_values, S_pistar, "r-o", markersize=3)
     axes[1].set_ylabel(r"$S(\pi^*_D, \pi^*_A)$")
