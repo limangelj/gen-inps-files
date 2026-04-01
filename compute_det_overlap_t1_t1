@@ -244,7 +244,7 @@ def visualize_mos(mol_d, mo_coeffs_d, mol_a, mo_coeffs_a,
     for (row, col), (mol, mo_vec, label) in zip(
             [(1,1),(1,2),(2,1),(2,2)], orbitals):
         xx, yy, zz, mo_vals = eval_mo_on_3d_grid(mol, mo_vec)
-        isoval = 0.02
+        isoval = 0.04
         fig.add_trace(
             go.Isosurface(
                 x=xx, y=yy, z=zz, value=mo_vals,
