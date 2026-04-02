@@ -1,0 +1,255 @@
+#!/usr/bin/env python3
+"""
+Probability Density Analysis of Naphthalene MO Cube Files.
+
+Computes and visualises the probability density rho(r) = |phi(r)|^2
+for the four key orbitals used in the DET calculation.
+
+The integral int|phi|^2 dV should equal 1.0 for a normalised orbital.
+Deviation from 1.0 indicates grid truncation or resolution issues.
+"""
+
+import numpy as np
+import subprocess
+
+# ------------------------------------------------------------
+# FILE PATHS
+# ------------------------------------------------------------
+BASE_DIR      = "/nfs/outputs/naphthalene"
+GCS_BUCKET    = "gs://orca_bucket/angel/"
+
+CUBE_PI_D     = f"{BASE_DIR}/naphthalene_camb3lyp_6311ppgss_t1_sp_t1geom.mo33a.cube"
+CUBE_PISTAR_D = f"{BASE_DIR}/naphthalene_camb3lyp_6311ppgss_t1_sp_t1geom.mo34a.cube"
+CUBE_PI_A     = f"{BASE_DIR}/naphthalene_camb3lyp_6311ppgss_t1_sp_t1geom.mo33a.cube"
+CUBE_PISTAR_A = f"{BASE_DIR}/naphthalene_camb3lyp_6311ppgss_t1_sp_t1geom.mo34a.cube"
+
+# ------------------------------------------------------------
+# OUTPUT FILES
+# ------------------------------------------------------------
+OUTPUT_HTML = f"{BASE_DIR}/probability_density_3d.html"
+OUTPUT_CSV  = f"{BASE_DIR}/probability_density.csv"
+
+# ------------------------------------------------------------
+# HELPER FUNCTIONS
+# ------------------------------------------------------------
+
+def read_cube(cube_file):
+    with open(cube_file) as f:
+        lines = f.readlines()
+    natoms = abs(int(lines[2].split()[0]))
+    origin = np.array([float(v) for v in lines[2].split()[1:4]]) * 0.529177
+    nx = int(lines[3].split()[0])
+    dx = float(lines[3].split()[1]) * 0.529177
+    ny = int(lines[4].split()[0])
+    dy = float(lines[4].split()[2]) * 0.529177
+    nz = int(lines[5].split()[0])
+    dz = float(lines[5].split()[3]) * 0.529177
+    data_start = 6 + natoms + 1
+    data_lines = lines[data_start:]
+    values = []
+    for line in data_lines:
+        values.extend([float(v) for v in line.split()])
+    field = np.array(values[:nx*ny*nz]).reshape(nx, ny, nz)
+    x = origin[0] + np.arange(nx) * dx
+    y = origin[1] + np.arange(ny) * dy
+    z = origin[2] + np.arange(nz) * dz
+    return x, y, z, field
+
+
+def analyse_probability_density(cube_file, label):
+    x, y, z, field = read_cube(cube_file)
+    density  = field ** 2
+    dV       = (x[1]-x[0]) * (y[1]-y[0]) * (z[1]-z[0])
+    integral = np.sum(density) * dV
+    nx, ny, nz = field.shape
+    x_range  = x[-1] - x[0]
+    y_range  = y[-1] - y[0]
+    z_range  = z[-1] - z[0]
+    max_density = density.max()
+    max_idx     = np.unravel_index(density.argmax(), density.shape)
+    max_pos     = (x[max_idx[0]], y[max_idx[1]], z[max_idx[2]])
+
+    print(f"\n{'='*55}")
+    print(f"  {label}")
+    print(f"{'='*55}")
+    print(f"  Cube file:         {cube_file.split('/')[-1]}")
+    print(f"  Grid shape:        {nx} x {ny} x {nz} = {nx*ny*nz:,} points")
+    print(f"  Grid extent:       {x_range:.2f} x {y_range:.2f} x {z_range:.2f} A")
+    print(f"  Volume element dV: {dV:.6f} A^3")
+    print(f"  Total volume:      {dV*nx*ny*nz:.2f} A^3")
+    print(f"  Max |phi|:         {np.abs(field).max():.6f}")
+    print(f"  Max |phi|^2:       {max_density:.6f} at {max_pos}")
+    print(f"  int|phi|^2 dV:     {integral:.6f}")
+    if abs(integral - 1.0) < 0.01:
+        print(f"  Normalisation:     excellent ({integral:.4f})")
+    elif abs(integral - 1.0) < 0.05:
+        print(f"  Normalisation:     good ({integral:.4f})")
+    elif abs(integral - 1.0) < 0.10:
+        print(f"  Normalisation:     acceptable ({integral:.4f})")
+    else:
+        print(f"  Normalisation:     poor ({integral:.4f}) -- grid too coarse or small")
+
+    return {
+        "label": label, "field": field, "density": density,
+        "integral": integral, "x": x, "y": y, "z": z,
+        "dV": dV, "nx": nx, "ny": ny, "nz": nz,
+    }
+
+
+def plot_probability_density_3d(results, save_path):
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+    from skimage.measure import marching_cubes
+
+    ELEM_NUM   = {6: "C", 1: "H", 7: "N", 8: "O", 30: "Zn"}
+    ELEM_COLOR = {"C": "gray", "H": "white", "N": "blue", "O": "red", "Zn": "purple"}
+    ELEM_SIZE  = {"C": 8, "H": 4, "N": 8, "O": 8, "Zn": 12}
+
+    def add_density_isosurface(fig, res, isoval_frac, row, col):
+        x, y, z = res["x"], res["y"], res["z"]
+        density  = res["density"]
+        isoval   = isoval_frac * density.max()
+        try:
+            verts, faces, _, _ = marching_cubes(
+                density, level=isoval,
+                spacing=(x[1]-x[0], y[1]-y[0], z[1]-z[0]))
+            verts[:, 0] += x[0]
+            verts[:, 1] += y[0]
+            verts[:, 2] += z[0]
+            fig.add_trace(go.Mesh3d(
+                x=verts[:, 0], y=verts[:, 1], z=verts[:, 2],
+                i=faces[:, 0], j=faces[:, 1], k=faces[:, 2],
+                color="gold", opacity=0.6, showscale=False,
+                name=res["label"],
+                lighting=dict(ambient=0.5, diffuse=0.8, specular=0.2, roughness=0.5),
+            ), row=row, col=col)
+        except Exception as e:
+            print(f"  Warning: could not compute isosurface -- {e}")
+
+    def add_skeleton(fig, cube_file, row, col):
+        with open(cube_file) as f:
+            lines = f.readlines()
+        natoms = abs(int(lines[2].split()[0]))
+        coords, symbols = [], []
+        for line in lines[6:6+natoms]:
+            parts = line.split()
+            if len(parts) < 5:
+                continue
+            elem = ELEM_NUM.get(int(parts[0]), "C")
+            coords.append([float(parts[2])*0.529177,
+                           float(parts[3])*0.529177,
+                           float(parts[4])*0.529177])
+            symbols.append(elem)
+        coords = np.array(coords)
+        fig.add_trace(go.Scatter3d(
+            x=coords[:, 0], y=coords[:, 1], z=coords[:, 2],
+            mode="markers",
+            marker=dict(size=[ELEM_SIZE.get(s, 6) for s in symbols],
+                        color=[ELEM_COLOR.get(s, "gray") for s in symbols],
+                        opacity=1.0, line=dict(width=1, color="black")),
+            showlegend=False, name="atoms",
+        ), row=row, col=col)
+        for i in range(len(coords)):
+            for j in range(i+1, len(coords)):
+                if np.linalg.norm(coords[i] - coords[j]) < 1.7:
+                    fig.add_trace(go.Scatter3d(
+                        x=[coords[i, 0], coords[j, 0]],
+                        y=[coords[i, 1], coords[j, 1]],
+                        z=[coords[i, 2], coords[j, 2]],
+                        mode="lines", line=dict(color="black", width=4),
+                        showlegend=False, name="bond",
+                    ), row=row, col=col)
+
+    cube_files  = [CUBE_PI_D, CUBE_PISTAR_D, CUBE_PI_A, CUBE_PISTAR_A]
+    isoval_frac = 0.10
+
+    fig = make_subplots(
+        rows=2, cols=2,
+        subplot_titles=[r["label"] for r in results],
+        specs=[[{"type": "scene"}, {"type": "scene"}],
+               [{"type": "scene"}, {"type": "scene"}]],
+        horizontal_spacing=0.05, vertical_spacing=0.1)
+
+    for (row, col), (res, cube_file) in zip(
+            [(1,1),(1,2),(2,1),(2,2)], zip(results, cube_files)):
+        print(f"  Computing density isosurface for {res['label']}...")
+        add_density_isosurface(fig, res, isoval_frac, row, col)
+        add_skeleton(fig, cube_file, row, col)
+
+    fig.update_layout(
+        title=(f"Probability Density |phi(r)|^2 -- 3D Isosurfaces<br>"
+               f"<sup>Gold surface = {isoval_frac*100:.0f}% of max density | "
+               f"Always positive (no sign) | "
+               f"Shows where electron is most likely to be found</sup>"),
+        height=900, width=1100)
+
+    html_path = save_path.replace(".png", ".html")
+    fig.write_html(html_path)
+    print(f"3D probability density plot saved to: {html_path}")
+    try:
+        fig.write_image(save_path)
+    except Exception:
+        print(f"Note: install kaleido for PNG export: pip install kaleido")
+
+
+def save_csv(results, save_path):
+    with open(save_path, "w") as f:
+        f.write("label,nx,ny,nz,dV_Ang3,integral_all_space\n")
+        for res in results:
+            f.write(f"{res['label']},"
+                    f"{res['nx']},{res['ny']},{res['nz']},"
+                    f"{res['dV']:.6f},{res['integral']:.6f}\n")
+    print(f"Statistics saved to: {save_path}")
+
+
+def upload_to_gcs(local_dir, gcs_bucket):
+    print(f"\nUploading results to {gcs_bucket}...")
+    for pattern in ["*.png", "*.csv", "*.html"]:
+        cmd = ["gsutil", "-m", "cp", f"{local_dir}/{pattern}", gcs_bucket]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode == 0:
+            print(f"  Uploaded {pattern} successfully")
+        else:
+            print(f"  Warning: upload of {pattern} failed")
+            print(f"  {result.stderr.strip()}")
+
+
+# ------------------------------------------------------------
+# MAIN
+# ------------------------------------------------------------
+
+def main():
+    print("Probability Density Analysis -- Naphthalene MO Cube Files")
+    print("=" * 55)
+
+    orbital_info = [
+        (CUBE_PI_D,     "pi_D   (SOMO-1, orbital 33, T1 triplet)"),
+        (CUBE_PISTAR_D, "pi*_D  (SOMO,   orbital 34, T1 triplet)"),
+        (CUBE_PI_A,     "pi_A   (SOMO-1, orbital 33, T1 triplet)"),
+        (CUBE_PISTAR_A, "pi*_A  (SOMO,   orbital 34, T1 triplet)"),
+    ]
+
+    results = []
+    for cube_file, label in orbital_info:
+        res = analyse_probability_density(cube_file, label)
+        results.append(res)
+
+    print(f"\n{'='*55}")
+    print("  SUMMARY")
+    print(f"{'='*55}")
+    print(f"  {'Orbital':<40} {'int|phi|^2 dV':>14}")
+    print(f"  {'-'*54}")
+    // for res in results:
+    //     status = "OK" if abs(res["integral"] - 1.0) < 0.05 else "POOR"
+    //     print(f"  {res['label']:<40} {res['integral']:>8.4f}  {status}")
+
+    print("\nGenerating 3D probability density visualisation...")
+    plot_probability_density_3d(results, OUTPUT_HTML)
+
+    save_csv(results, OUTPUT_CSV)
+    upload_to_gcs(BASE_DIR, GCS_BUCKET)
+    print("\nDone!")
+
+
+if __name__ == "__main__":
+    main()
