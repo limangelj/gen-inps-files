@@ -239,9 +239,6 @@ def main():
     print(f"{'='*55}")
     print(f"  {'Orbital':<40} {'int|phi|^2 dV':>14}")
     print(f"  {'-'*54}")
-    // for res in results:
-    //     status = "OK" if abs(res["integral"] - 1.0) < 0.05 else "POOR"
-    //     print(f"  {res['label']:<40} {res['integral']:>8.4f}  {status}")
 
     print("\nGenerating 3D probability density visualisation...")
     plot_probability_density_3d(results, OUTPUT_HTML)
