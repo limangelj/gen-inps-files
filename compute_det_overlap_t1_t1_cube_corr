@@ -1,0 +1,260 @@
+#!/usr/bin/env python3
+"""
+Compute Dexter Energy Transfer (DET) orbital overlaps for naphthalene dimer.
+
+Replicating Bai et al. 2020 Figure 2b.
+Uses same adiabatic triplet MOs for both donor and acceptor.
+Donor:    T1 opt geometry, triplet SP -> SOMO-1 = pi_D,  SOMO = pi*_D
+Acceptor: T1 opt geometry, triplet SP -> SOMO-1 = pi_A,  SOMO = pi*_A
+
+Overlap integrals computed from cube files with c² renormalisation correction:
+    c = 1 / sqrt(∫|φ|² dV)
+    S_corrected = c_D × c_A × S_cube
+    V_DET = κ × S_corrected(π) × S_corrected(π*)
+          = κ × c⁴ × S_cube(π) × S_cube(π*)
+"""
+
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.interpolate import RegularGridInterpolator
+import subprocess
+
+# ------------------------------------------------------------
+# FILE PATHS
+# ------------------------------------------------------------
+BASE_DIR        = "/nfs/outputs/naphthalene"
+GCS_BUCKET      = "gs://orca_bucket/angel/"
+DONOR_XYZ       = f"{BASE_DIR}/naphthalene_b3lyp_6311ppgss_t1_opt.xyz"
+ACCEPTOR_XYZ    = f"{BASE_DIR}/naphthalene_b3lyp_6311ppgss_t1_opt.xyz"
+
+# Cube files — used for overlap integrals and visualisation
+CUBE_PI_D     = f"{BASE_DIR}/naphthalene_camb3lyp_6311ppgss_t1_sp_t1geom.mo33a.cube"
+CUBE_PISTAR_D = f"{BASE_DIR}/naphthalene_camb3lyp_6311ppgss_t1_sp_t1geom.mo34a.cube"
+CUBE_PI_A     = f"{BASE_DIR}/naphthalene_camb3lyp_6311ppgss_t1_sp_t1geom.mo33a.cube"
+CUBE_PISTAR_A = f"{BASE_DIR}/naphthalene_camb3lyp_6311ppgss_t1_sp_t1geom.mo34a.cube"
+
+# ------------------------------------------------------------
+# SCAN PARAMETERS
+# ------------------------------------------------------------
+STACK_DISTANCE = 3.5
+X_START        = 0.0
+X_END          = 8.0
+N_POINTS       = 50
+KAPPA          = 24.0  # eV, Bai et al. 2020
+
+# ------------------------------------------------------------
+# OUTPUT FILE NAMES
+# ------------------------------------------------------------
+OUTPUT_CSV = f"{BASE_DIR}/det_overlaps_cube_corr.csv"
+OUTPUT_PNG = f"{BASE_DIR}/det_overlaps_cube_corr.png"
+
+# ------------------------------------------------------------
+# HELPER FUNCTIONS
+# ------------------------------------------------------------
+
+def read_xyz(filepath):
+    atoms = []
+    with open(filepath) as f:
+        lines = f.readlines()
+    for line in lines[2:]:
+        parts = line.split()
+        if len(parts) == 4:
+            atoms.append((parts[0],
+                          float(parts[1]), float(parts[2]), float(parts[3])))
+    return atoms
+
+
+def centre_atoms(atoms):
+    xs = [x for _, x, _, _ in atoms]
+    ys = [y for _, _, y, _ in atoms]
+    cx = sum(xs) / len(xs)
+    cy = sum(ys) / len(ys)
+    return [(e, x-cx, y-cy, z) for e, x, y, z in atoms]
+
+
+def shift_atoms(atoms, dx=0.0, dy=0.0, dz=0.0):
+    return [(e, x+dx, y+dy, z+dz) for e, x, y, z in atoms]
+
+
+def read_cube(cube_file):
+    """
+    Read an ORCA cube file.
+    Returns x, y, z grid arrays (Angstrom) and field values.
+    Note: ORCA MO cube files use negative natoms — handled with abs().
+    """
+    with open(cube_file) as f:
+        lines = f.readlines()
+    natoms = abs(int(lines[2].split()[0]))
+    origin = np.array([float(v) for v in lines[2].split()[1:4]]) * 0.529177
+    nx = int(lines[3].split()[0])
+    dx = float(lines[3].split()[1]) * 0.529177
+    ny = int(lines[4].split()[0])
+    dy = float(lines[4].split()[2]) * 0.529177
+    nz = int(lines[5].split()[0])
+    dz = float(lines[5].split()[3]) * 0.529177
+    data_start = 6 + natoms + 1
+    data_lines = lines[data_start:]
+    values = []
+    for line in data_lines:
+        values.extend([float(v) for v in line.split()])
+    field = np.array(values[:nx*ny*nz]).reshape(nx, ny, nz)
+    x = origin[0] + np.arange(nx) * dx
+    y = origin[1] + np.arange(ny) * dy
+    z = origin[2] + np.arange(nz) * dz
+    return x, y, z, field
+
+
+def compute_normalisation_correction(cube_file, label):
+    """
+    Compute c = 1 / sqrt(∫|φ|² dV) from a cube file.
+
+    For a properly normalised orbital ∫|φ|² dV = 1 and c = 1.
+    If the cube file grid is truncated, ∫|φ|² dV < 1 and c > 1.
+
+    Returns
+    -------
+    c        : float, normalisation correction factor
+    integral : float, ∫|φ|² dV from cube file
+    """
+    x, y, z, field = read_cube(cube_file)
+    dV       = (x[1]-x[0]) * (y[1]-y[0]) * (z[1]-z[0])
+    integral = np.sum(field**2) * dV
+    c        = 1.0 / np.sqrt(integral)
+    print(f"  {label}:")
+    print(f"    ∫|φ|² dV = {integral:.6f}  →  c = {c:.6f}")
+    return c, integral
+
+
+def overlap_from_cubes(cube_donor, cube_acceptor, dx=0.0, dy=0.0, dz=0.0):
+    """
+    Compute raw MO overlap integral using cube files via numerical integration.
+    Acceptor grid is shifted by (dx, dy, dz) to simulate displacement.
+    """
+    x_d, y_d, z_d, field_d = read_cube(cube_donor)
+    x_a, y_a, z_a, field_a = read_cube(cube_acceptor)
+
+    x_a = x_a + dx
+    y_a = y_a + dy
+    z_a = z_a + dz
+
+    interp = RegularGridInterpolator(
+        (x_a, y_a, z_a), field_a,
+        method="linear",
+        bounds_error=False,
+        fill_value=0.0
+    )
+
+    xx, yy, zz = np.meshgrid(x_d, y_d, z_d, indexing="ij")
+    pts = np.column_stack([xx.ravel(), yy.ravel(), zz.ravel()])
+    field_a_on_donor = interp(pts).reshape(xx.shape)
+
+    dV = (x_d[1]-x_d[0]) * (y_d[1]-y_d[0]) * (z_d[1]-z_d[0])
+    S  = np.sum(field_d * field_a_on_donor) * dV
+
+    return S
+
+
+def upload_to_gcs(local_dir, gcs_bucket):
+    print(f"\nUploading results to {gcs_bucket}...")
+    for pattern in ["*.png", "*.csv"]:
+        cmd = ["gsutil", "-m", "cp", f"{local_dir}/{pattern}", gcs_bucket]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode == 0:
+            print(f"  Uploaded {pattern} successfully")
+        else:
+            print(f"  Warning: upload of {pattern} failed")
+            print(f"  {result.stderr.strip()}")
+
+
+# ------------------------------------------------------------
+# MAIN
+# ------------------------------------------------------------
+
+def main():
+    print("Mode: CUBE FILE + c² CORRECTION ONLY")
+    print("Reading and centring geometries...")
+    donor_atoms_base    = centre_atoms(read_xyz(DONOR_XYZ))
+    acceptor_atoms_base = centre_atoms(read_xyz(ACCEPTOR_XYZ))
+
+    # --- Compute c² normalisation corrections ---
+    print("\nComputing c² normalisation corrections from cube files...")
+    c_pi_D,     integral_pi_D     = compute_normalisation_correction(
+        CUBE_PI_D,     "π_D   (SOMO-1, orbital 33)")
+    c_pistar_D, integral_pistar_D = compute_normalisation_correction(
+        CUBE_PISTAR_D, "π*_D  (SOMO,   orbital 34)")
+    c_pi_A,     integral_pi_A     = compute_normalisation_correction(
+        CUBE_PI_A,     "π_A   (SOMO-1, orbital 33)")
+    c_pistar_A, integral_pistar_A = compute_normalisation_correction(
+        CUBE_PISTAR_A, "π*_A  (SOMO,   orbital 34)")
+
+    corr_pi     = c_pi_D    * c_pi_A
+    corr_pistar = c_pistar_D * c_pistar_A
+    c4          = corr_pi * corr_pistar
+
+    print(f"\n  Correction factors:")
+    print(f"    c(π_D) × c(π_A)   = {corr_pi:.6f}")
+    print(f"    c(π*_D) × c(π*_A) = {corr_pistar:.6f}")
+    print(f"    c⁴                 = {c4:.6f}")
+
+    # --- Scan ---
+    x_values       = np.linspace(X_START, X_END, N_POINTS)
+    S_pi_corr      = np.zeros(N_POINTS)
+    S_pistar_corr  = np.zeros(N_POINTS)
+    V_DET_eV_corr  = np.zeros(N_POINTS)
+
+    print(f"\nScanning acceptor along x-axis ({N_POINTS} points)...")
+    for i, dx in enumerate(x_values):
+        print(f"  x = {dx:.2f} Å  ({i+1}/{N_POINTS})", end="\r")
+
+        S_pi_corr[i]     = corr_pi     * overlap_from_cubes(
+            CUBE_PI_D, CUBE_PI_A,
+            dx=dx, dy=0.0, dz=STACK_DISTANCE)
+        S_pistar_corr[i] = corr_pistar * overlap_from_cubes(
+            CUBE_PISTAR_D, CUBE_PISTAR_A,
+            dx=dx, dy=0.0, dz=STACK_DISTANCE)
+        V_DET_eV_corr[i] = KAPPA * S_pi_corr[i] * S_pistar_corr[i]
+
+    print("\nDone.")
+
+    # --- Summary at x=0 ---
+    print(f"\n  Summary at x=0:")
+    print(f"    S_π   corrected  = {S_pi_corr[0]:.6f}")
+    print(f"    S_π*  corrected  = {S_pistar_corr[0]:.6f}")
+    print(f"    V_DET corrected  = {V_DET_eV_corr[0]:.4e} eV")
+
+    # --- Save CSV ---
+    header = ("x_displacement_Ang,"
+              "S_pi_corrected,S_pistar_corrected,V_DET_eV_corrected")
+    data = np.column_stack([x_values, S_pi_corr, S_pistar_corr, V_DET_eV_corr])
+    np.savetxt(OUTPUT_CSV, data, delimiter=",", header=header)
+    print(f"\nResults saved to: {OUTPUT_CSV}")
+
+    # --- Plot ---
+    fig, axes = plt.subplots(3, 1, figsize=(8, 10), sharex=True)
+
+    axes[0].plot(x_values, S_pi_corr, "r-o", markersize=3)
+    axes[0].set_ylabel(r"$S(\pi_D, \pi_A)$")
+    axes[0].axhline(0, color="k", linewidth=0.5)
+    axes[0].set_title(
+        f"Naphthalene DET — Cube c²-corrected (T1-T1)")
+
+    axes[1].plot(x_values, S_pistar_corr, "b-o", markersize=3)
+    axes[1].set_ylabel(r"$S(\pi^*_D, \pi^*_A)$")
+    axes[1].axhline(0, color="k", linewidth=0.5)
+
+    axes[2].semilogy(x_values, np.abs(V_DET_eV_corr), "g-o", markersize=3)
+    axes[2].set_ylabel(r"$|V_{DET}|$ (eV)")
+    axes[2].set_xlabel("x displacement (Å)")
+    axes[2].set_title(r"$|V_{DET}| = \kappa \times |S_{corr} \cdot S^*_{corr}|$, "
+                      r"$\kappa$ = 24 eV (log scale)")
+
+    plt.tight_layout()
+    plt.savefig(OUTPUT_PNG, dpi=150)
+    print(f"Plot saved to: {OUTPUT_PNG}")
+    plt.show()
+
+    upload_to_gcs(BASE_DIR, GCS_BUCKET)
+
+
+if __name__ == "__main__":
+    main()
