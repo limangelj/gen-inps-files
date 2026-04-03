@@ -9,6 +9,12 @@ Acceptor: T1 opt geometry, triplet SP -> SOMO-1 = pi_A,  SOMO = pi*_A
 
 MO visualisation AND overlap integrals both use cube files.
 Molden overlap also computed for comparison.
+
+c² renormalisation correction applied to cube overlaps:
+    c = 1 / sqrt(∫|φ|² dV)
+    S_corrected = c_D × c_A × S_cube
+    V_DET = κ × S_corrected(π) × S_corrected(π*)
+          = κ × c⁴ × S_cube(π) × S_cube(π*)
 """
 
 import numpy as np
@@ -63,11 +69,11 @@ TOLERANCE            =  0.001
 # ------------------------------------------------------------
 # OUTPUT FILE NAMES
 # ------------------------------------------------------------
-OUTPUT_CSV     = f"{BASE_DIR}/det_overlaps_cube.csv"
-OUTPUT_PNG     = f"{BASE_DIR}/det_overlaps_cube.png"
-OUTPUT_MO_PNG  = f"{BASE_DIR}/mo_visualisation_cube.png"
-OUTPUT_MO_HTML = f"{BASE_DIR}/mo_visualisation_cube.html"
-DIMER_PNG_STEM = f"{BASE_DIR}/dimer_geometry_cube_x"
+OUTPUT_CSV     = f"{BASE_DIR}/det_overlaps_cube_corr.csv"
+OUTPUT_PNG     = f"{BASE_DIR}/det_overlaps_cube_corr.png"
+OUTPUT_MO_PNG  = f"{BASE_DIR}/mo_visualisation_cube_corr.png"
+OUTPUT_MO_HTML = f"{BASE_DIR}/mo_visualisation_cube_corr.html"
+DIMER_PNG_STEM = f"{BASE_DIR}/dimer_geometry_cube_x_corr"
 
 # ------------------------------------------------------------
 # HELPER FUNCTIONS
@@ -160,6 +166,30 @@ def read_cube(cube_file):
     return x, y, z, field
 
 
+def compute_normalisation_correction(cube_file, label):
+    """
+    Compute c = 1 / sqrt(∫|φ|² dV) from a cube file.
+
+    For a properly normalised orbital ∫|φ|² dV = 1 and c = 1.
+    If the cube file grid is truncated, ∫|φ|² dV < 1 and c > 1.
+
+    The corrected overlap between two orbitals is:
+        S_corrected = c_D × c_A × S_cube
+
+    Returns
+    -------
+    c        : float, normalisation correction factor
+    integral : float, ∫|φ|² dV from cube file
+    """
+    x, y, z, field = read_cube(cube_file)
+    dV       = (x[1]-x[0]) * (y[1]-y[0]) * (z[1]-z[0])
+    integral = np.sum(field**2) * dV
+    c        = 1.0 / np.sqrt(integral)
+    print(f"  {label}:")
+    print(f"    ∫|φ|² dV = {integral:.6f}  →  c = {c:.6f}")
+    return c, integral
+
+
 def overlap_from_cubes(cube_donor, cube_acceptor, dx=0.0, dy=0.0, dz=0.0):
     """
     Compute MO overlap integral using cube files.
@@ -179,7 +209,7 @@ def overlap_from_cubes(cube_donor, cube_acceptor, dx=0.0, dy=0.0, dz=0.0):
 
     Returns
     -------
-    S : float, overlap integral (dimensionless)
+    S : float, raw overlap integral (dimensionless, not yet c²-corrected)
     """
     x_d, y_d, z_d, field_d = read_cube(cube_donor)
     x_a, y_a, z_a, field_a = read_cube(cube_acceptor)
@@ -405,7 +435,7 @@ def visualize_mos(save_path):
 # ------------------------------------------------------------
 
 def main():
-    print("Mode: CUBE FILE — Visualisation + Overlap Integrals")
+    print("Mode: CUBE FILE — Visualisation + Overlap Integrals + c² Correction")
     print("Reading and centring geometries...")
     donor_atoms_base    = centre_atoms(read_xyz(DONOR_XYZ))
     acceptor_atoms_base = centre_atoms(read_xyz(ACCEPTOR_XYZ))
@@ -444,6 +474,31 @@ def main():
     else:
         print(f"  WARNING: pi*_D mismatch")
 
+    # --- Compute c² normalisation corrections from cube files ---
+    print("\nComputing c² normalisation corrections from cube files...")
+    c_pi_D,     integral_pi_D     = compute_normalisation_correction(
+        CUBE_PI_D,     "π_D   (SOMO-1, orbital 33)")
+    c_pistar_D, integral_pistar_D = compute_normalisation_correction(
+        CUBE_PISTAR_D, "π*_D  (SOMO,   orbital 34)")
+    c_pi_A,     integral_pi_A     = compute_normalisation_correction(
+        CUBE_PI_A,     "π_A   (SOMO-1, orbital 33)")
+    c_pistar_A, integral_pistar_A = compute_normalisation_correction(
+        CUBE_PISTAR_A, "π*_A  (SOMO,   orbital 34)")
+
+    # Correction factor for each overlap pair
+    corr_pi     = c_pi_D    * c_pi_A       # applied to S_cube(π_D, π_A)
+    corr_pistar = c_pistar_D * c_pistar_A  # applied to S_cube(π*_D, π*_A)
+    c4          = corr_pi * corr_pistar    # total c⁴ factor for V_DET
+
+    print(f"\n  Correction factors:")
+    print(f"    c(π_D)             = {c_pi_D:.6f}")
+    print(f"    c(π*_D)            = {c_pistar_D:.6f}")
+    print(f"    c(π_A)             = {c_pi_A:.6f}")
+    print(f"    c(π*_A)            = {c_pistar_A:.6f}")
+    print(f"    c(π_D) × c(π_A)   = {corr_pi:.6f}  (applied to S_π)")
+    print(f"    c(π*_D) × c(π*_A) = {corr_pistar:.6f}  (applied to S_π*)")
+    print(f"    c⁴ = {corr_pi:.4f} × {corr_pistar:.4f} = {c4:.4f}  (applied to V_DET)")
+
     print("\nVisualising dimer geometry...")
     for dx_vis in [0.0, 1.5, 4.0]:
         acceptor_vis = shift_atoms(acceptor_atoms_base,
@@ -454,52 +509,35 @@ def main():
     print("\nVisualising MOs from cube files...")
     visualize_mos(save_path=OUTPUT_MO_PNG)
 
-    # --- Preload donor cube fields (fixed, read once) ---
-    print("\nPreloading donor cube files...")
-    x_d_pi,     y_d_pi,     z_d_pi,     field_d_pi     = read_cube(CUBE_PI_D)
-    x_d_pistar, y_d_pistar, z_d_pistar, field_d_pistar = read_cube(CUBE_PISTAR_D)
-    print(f"  Donor pi    cube grid: {field_d_pi.shape}")
-    print(f"  Donor pi*   cube grid: {field_d_pistar.shape}")
-
-    # Volume elements
-    dV_pi     = ((x_d_pi[1]-x_d_pi[0]) *
-                 (y_d_pi[1]-y_d_pi[0]) *
-                 (z_d_pi[1]-z_d_pi[0]))
-    dV_pistar = ((x_d_pistar[1]-x_d_pistar[0]) *
-                 (y_d_pistar[1]-y_d_pistar[0]) *
-                 (z_d_pistar[1]-z_d_pistar[0]))
-
-    # --- Preload acceptor cube fields ---
-    print("Preloading acceptor cube files...")
-    x_a_pi,     y_a_pi,     z_a_pi,     field_a_pi     = read_cube(CUBE_PI_A)
-    x_a_pistar, y_a_pistar, z_a_pistar, field_a_pistar = read_cube(CUBE_PISTAR_A)
-
     # --- Scan ---
-    x_values       = np.linspace(X_START, X_END, N_POINTS)
-    S_pi_cube      = np.zeros(N_POINTS)
-    S_pistar_cube  = np.zeros(N_POINTS)
-    V_DET_cube     = np.zeros(N_POINTS)
-    V_DET_eV_cube  = np.zeros(N_POINTS)
-    S_pi_molden    = np.zeros(N_POINTS)
-    S_pistar_molden = np.zeros(N_POINTS)
-    V_DET_molden   = np.zeros(N_POINTS)
-    V_DET_eV_molden = np.zeros(N_POINTS)
+    x_values            = np.linspace(X_START, X_END, N_POINTS)
+    S_pi_cube_raw       = np.zeros(N_POINTS)
+    S_pistar_cube_raw   = np.zeros(N_POINTS)
+    S_pi_cube_corr      = np.zeros(N_POINTS)
+    S_pistar_cube_corr  = np.zeros(N_POINTS)
+    V_DET_eV_cube_raw   = np.zeros(N_POINTS)
+    V_DET_eV_cube_corr  = np.zeros(N_POINTS)
+    S_pi_molden         = np.zeros(N_POINTS)
+    S_pistar_molden     = np.zeros(N_POINTS)
+    V_DET_eV_molden     = np.zeros(N_POINTS)
 
     print(f"\nScanning acceptor along x-axis ({N_POINTS} points)...")
     for i, dx in enumerate(x_values):
         print(f"  x = {dx:.2f} Å  ({i+1}/{N_POINTS})", end="\r")
 
-        # --- Cube overlap ---
-        S_pi_cube[i] = overlap_from_cubes(
-            CUBE_PI_D, CUBE_PI_A,
-            dx=dx, dy=0.0, dz=STACK_DISTANCE
-        )
-        S_pistar_cube[i] = overlap_from_cubes(
-            CUBE_PISTAR_D, CUBE_PISTAR_A,
-            dx=dx, dy=0.0, dz=STACK_DISTANCE
-        )
-        V_DET_cube[i]    = S_pi_cube[i] * S_pistar_cube[i]
-        V_DET_eV_cube[i] = KAPPA * V_DET_cube[i]
+        # --- Raw cube overlaps ---
+        S_pi_cube_raw[i]     = overlap_from_cubes(
+            CUBE_PI_D, CUBE_PI_A, dx=dx, dy=0.0, dz=STACK_DISTANCE)
+        S_pistar_cube_raw[i] = overlap_from_cubes(
+            CUBE_PISTAR_D, CUBE_PISTAR_A, dx=dx, dy=0.0, dz=STACK_DISTANCE)
+
+        # --- c²-corrected cube overlaps ---
+        S_pi_cube_corr[i]     = corr_pi     * S_pi_cube_raw[i]
+        S_pistar_cube_corr[i] = corr_pistar * S_pistar_cube_raw[i]
+
+        # --- V_DET from cube (raw and corrected) ---
+        V_DET_eV_cube_raw[i]  = KAPPA * S_pi_cube_raw[i]  * S_pistar_cube_raw[i]
+        V_DET_eV_cube_corr[i] = KAPPA * S_pi_cube_corr[i] * S_pistar_cube_corr[i]
 
         # --- Molden overlap (for comparison) ---
         acceptor_atoms = shift_atoms(acceptor_atoms_base,
@@ -520,41 +558,66 @@ def main():
                                                         mol_acceptor, pi_A)
         S_pistar_molden[i] = compute_mo_overlap_molden(mol_donor, pistar_D,
                                                         mol_acceptor, pistar_A)
-        V_DET_molden[i]    = S_pi_molden[i] * S_pistar_molden[i]
-        V_DET_eV_molden[i] = KAPPA * V_DET_molden[i]
+        V_DET_eV_molden[i] = KAPPA * S_pi_molden[i] * S_pistar_molden[i]
 
     print("\nDone.")
 
-    # --- Save results ---
+    # --- Summary at x=0 ---
+    print(f"\n  Summary at x=0:")
+    print(f"    S_π   cube raw       = {S_pi_cube_raw[0]:.6f}")
+    print(f"    S_π   cube corrected = {S_pi_cube_corr[0]:.6f}")
+    print(f"    S_π*  cube raw       = {S_pistar_cube_raw[0]:.6f}")
+    print(f"    S_π*  cube corrected = {S_pistar_cube_corr[0]:.6f}")
+    print(f"    V_DET cube raw       = {V_DET_eV_cube_raw[0]:.4e} eV")
+    print(f"    V_DET cube corrected = {V_DET_eV_cube_corr[0]:.4e} eV")
+    print(f"    V_DET molden         = {V_DET_eV_molden[0]:.4e} eV")
+    print(f"    Ratio corr/raw       = {abs(V_DET_eV_cube_corr[0]/V_DET_eV_cube_raw[0]):.2f}x  "
+          f"(expected c⁴ = {c4:.2f}x)")
+
+    # --- Save CSV ---
     header = ("x_displacement_Ang,"
-              "S_pi_cube,S_pistar_cube,V_DET_cube,V_DET_eV_cube,"
-              "S_pi_molden,S_pistar_molden,V_DET_molden,V_DET_eV_molden")
+              "S_pi_cube_raw,S_pistar_cube_raw,V_DET_eV_cube_raw,"
+              "S_pi_cube_corrected,S_pistar_cube_corrected,V_DET_eV_cube_corrected,"
+              "S_pi_molden,S_pistar_molden,V_DET_eV_molden")
     data = np.column_stack([
         x_values,
-        S_pi_cube, S_pistar_cube, V_DET_cube, V_DET_eV_cube,
-        S_pi_molden, S_pistar_molden, V_DET_molden, V_DET_eV_molden
+        S_pi_cube_raw, S_pistar_cube_raw, V_DET_eV_cube_raw,
+        S_pi_cube_corr, S_pistar_cube_corr, V_DET_eV_cube_corr,
+        S_pi_molden, S_pistar_molden, V_DET_eV_molden,
     ])
     np.savetxt(OUTPUT_CSV, data, delimiter=",", header=header)
     print(f"Results saved to: {OUTPUT_CSV}")
 
-    # --- Plot comparison ---
+    # --- Plot ---
     fig, axes = plt.subplots(3, 1, figsize=(9, 11), sharex=True)
 
-    axes[0].plot(x_values, S_pi_cube,   "k-o", markersize=3, label="Cube")
-    axes[0].plot(x_values, S_pi_molden, "b-s", markersize=3, label="Molden")
+    axes[0].plot(x_values, S_pi_cube_raw,  "k-o", markersize=3,
+                 label="Cube raw")
+    axes[0].plot(x_values, S_pi_cube_corr, "k-^", markersize=4, linewidth=2,
+                 label=f"Cube c²-corr (×{corr_pi:.2f})")
+    axes[0].plot(x_values, S_pi_molden,    "b-s", markersize=3,
+                 label="Molden")
     axes[0].set_ylabel(r"$S(\pi_D, \pi_A)$")
     axes[0].axhline(0, color="k", linewidth=0.5)
     axes[0].legend(fontsize=8)
-    axes[0].set_title("Naphthalene DET Overlaps — Cube vs Molden (T1-T1)")
+    axes[0].set_title(
+        f"Naphthalene DET Overlaps — Cube (raw + c²-corr) vs Molden (T1-T1)")
 
-    axes[1].plot(x_values, S_pistar_cube,   "k-o", markersize=3, label="Cube")
-    axes[1].plot(x_values, S_pistar_molden, "r-s", markersize=3, label="Molden")
+    axes[1].plot(x_values, S_pistar_cube_raw,  "k-o", markersize=3,
+                 label="Cube raw")
+    axes[1].plot(x_values, S_pistar_cube_corr, "k-^", markersize=4, linewidth=2,
+                 label=f"Cube c²-corr (×{corr_pistar:.2f})")
+    axes[1].plot(x_values, S_pistar_molden,    "r-s", markersize=3,
+                 label="Molden")
     axes[1].set_ylabel(r"$S(\pi^*_D, \pi^*_A)$")
     axes[1].axhline(0, color="k", linewidth=0.5)
     axes[1].legend(fontsize=8)
 
-    axes[2].semilogy(x_values, np.abs(V_DET_eV_cube),
-                     "k-o", markersize=3, label="Cube")
+    axes[2].semilogy(x_values, np.abs(V_DET_eV_cube_raw),
+                     "k-o", markersize=3, label="Cube raw")
+    axes[2].semilogy(x_values, np.abs(V_DET_eV_cube_corr),
+                     "k-^", markersize=4, linewidth=2,
+                     label=f"Cube c²-corr (×{c4:.2f})")
     axes[2].semilogy(x_values, np.abs(V_DET_eV_molden),
                      "g-s", markersize=3, label="Molden")
     axes[2].set_ylabel(r"$|V_{DET}|$ (eV)")
