@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Generate ORCA input files for ZnP DET workflow — Mode A (separate molecules).
+Generate ORCA input files for ZnP DET workflow — separate molecules
 
 Usage:
-    python generate_znp_inputs.py ZnP.xyz 0 --cores 16 --mem 8000
+    python gen_znp_inputs.py ZnP.xyz 0 --cores 16 --mem 8000
 
 Workflow:
     Step 1: T1 opt  (UKS B3LYP / def2-TZVP / D3BJ, triplet)
@@ -21,13 +21,9 @@ import os
 # ------------------------------------------------------------
 
 T1_OPT_TEMPLATE = """\
-# ZnP T1 geometry optimisation
-# UKS B3LYP / def2-TZVP / D3BJ
-# Triplet state
-
 ! UKS B3LYP D3BJ OPT TightOpt TightSCF
 ! def2-TZVP def2/J RIJCOSX
-! Grid5 FinalGrid6
+
 
 %pal nprocs {cores} end
 %maxcore {mem}
@@ -44,13 +40,8 @@ end
 """
 
 T1_SP_TEMPLATE = """\
-# ZnP T1 single point on T1 optimised geometry
-# UKS CAM-B3LYP / def2-TZVP / D3BJ
-# Triplet state
-
 ! UKS CAM-B3LYP D3BJ TightSCF
 ! def2-TZVP def2/J RIJCOSX
-! Grid5 FinalGrid6
 
 %pal nprocs {cores} end
 %maxcore {mem}
@@ -64,12 +55,6 @@ end
 
 RUN_TEMPLATE = """\
 #!/bin/bash
-# ------------------------------------------------------------
-# ZnP DET Workflow
-# Step 1: T1 opt  (triplet) — UKS B3LYP / def2-TZVP / D3BJ
-# Step 2: T1 SP   (triplet) — UKS CAM-B3LYP / def2-TZVP / D3BJ
-#         → SOMO-1 = pi_D, SOMO = pi*_D
-# ------------------------------------------------------------
 
 # Step 1: T1 geometry optimisation
 t1_opt_jid=$(qorca -i ./{t1_opt_file} -c {cores} -m {mem})
@@ -127,10 +112,10 @@ def main():
     check_xyz(xyz_path)
 
     stem        = args.name
-    mult        = 3  # triplet
+    mult        = 3  
 
-    t1_opt_stem = f"{stem}_b3lyp_t1_opt"
-    t1_sp_stem  = f"{stem}_camb3lyp_t1_sp"
+    t1_opt_stem = f"{stem}_b3lyp_def2-TZVP_t1_opt"
+    t1_sp_stem  = f"{stem}_cam-b3lyp_def2-TZVP_t1_sp"
 
     t1_opt_file = Path(t1_opt_stem + ".inp")
     t1_sp_file  = Path(t1_sp_stem  + ".inp")
@@ -175,9 +160,6 @@ def main():
     print(f"  {t1_opt_file}  — T1 geometry optimisation")
     print(f"  {t1_sp_file}   — T1 single point")
     print(f"  {run_file}     — submission script")
-    print(f"\nNext steps after T1 SP completes:")
-    print(f"  1. Check <S**2> in {t1_sp_stem}.out (~2.0 expected)")
-    print(f"  2. Find SOMO-1 and SOMO indices from ORBITAL ENERGIES section")
 
 
 if __name__ == "__main__":
