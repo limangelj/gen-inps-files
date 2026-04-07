@@ -1,0 +1,184 @@
+#!/usr/bin/env python3
+"""
+Generate ORCA input files for ZnP DET workflow — Mode A (separate molecules).
+
+Usage:
+    python generate_znp_inputs.py ZnP.xyz 0 --cores 16 --mem 8000
+
+Workflow:
+    Step 1: T1 opt  (UKS B3LYP / def2-TZVP / D3BJ, triplet)
+    Step 2: T1 SP   (UKS CAM-B3LYP / def2-TZVP / D3BJ, triplet)
+            → SOMO-1 (pi_D) and SOMO (pi*_D)
+"""
+
+from pathlib import Path
+import argparse
+import sys
+import os
+
+# ------------------------------------------------------------
+# TEMPLATES
+# ------------------------------------------------------------
+
+T1_OPT_TEMPLATE = """\
+# ZnP T1 geometry optimisation
+# UKS B3LYP / def2-TZVP / D3BJ
+# Triplet state
+
+! UKS B3LYP D3BJ OPT TightOpt TightSCF
+! def2-TZVP def2/J RIJCOSX
+! Grid5 FinalGrid6
+
+%pal nprocs {cores} end
+%maxcore {mem}
+
+%geom
+  MaxIter 200
+end
+
+%scf
+  MaxIter 500
+end
+
+* xyzfile {charge} {mult} {xyz}
+"""
+
+T1_SP_TEMPLATE = """\
+# ZnP T1 single point on T1 optimised geometry
+# UKS CAM-B3LYP / def2-TZVP / D3BJ
+# Triplet state
+
+! UKS CAM-B3LYP D3BJ TightSCF
+! def2-TZVP def2/J RIJCOSX
+! Grid5 FinalGrid6
+
+%pal nprocs {cores} end
+%maxcore {mem}
+
+%scf
+  MaxIter 500
+end
+
+* xyzfile {charge} {mult} {xyz}
+"""
+
+RUN_TEMPLATE = """\
+#!/bin/bash
+# ------------------------------------------------------------
+# ZnP DET Workflow
+# Step 1: T1 opt  (triplet) — UKS B3LYP / def2-TZVP / D3BJ
+# Step 2: T1 SP   (triplet) — UKS CAM-B3LYP / def2-TZVP / D3BJ
+#         → SOMO-1 = pi_D, SOMO = pi*_D
+# ------------------------------------------------------------
+
+# Step 1: T1 geometry optimisation
+t1_opt_jid=$(qorca -i ./{t1_opt_file} -c {cores} -m {mem})
+echo "Submitted ZnP T1 opt: $t1_opt_jid"
+
+# Step 2: T1 SP on T1 geometry — donor MOs
+t1_sp_jid=$(qorca -i ./{t1_sp_file} -c {cores} -m {mem} -j ${{t1_opt_jid}})
+echo "Submitted ZnP T1 SP: $t1_sp_jid"
+
+echo ""
+echo "Workflow submitted:"
+echo "  T1 opt (job $t1_opt_jid) --> T1 SP (job $t1_sp_jid)"
+"""
+
+# ------------------------------------------------------------
+# HELPERS
+# ------------------------------------------------------------
+
+def check_xyz(xyz_path: Path):
+    if not xyz_path.exists():
+        print(f"Error: {xyz_path} not found.")
+        sys.exit(1)
+    if xyz_path.suffix != ".xyz":
+        print("Error: input must be a .xyz file")
+        sys.exit(1)
+
+
+def write_file(path: Path, content: str, executable: bool = False):
+    path.write_text(content)
+    if executable:
+        os.chmod(path, 0o755)
+    print(f"  Written: {path}")
+
+
+# ------------------------------------------------------------
+# MAIN
+# ------------------------------------------------------------
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Generate ORCA inputs for ZnP T1 opt → T1 SP workflow",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
+    parser.add_argument("xyz",    help="Input .xyz file (initial ZnP geometry)")
+    parser.add_argument("charge", type=int, help="Net charge of ZnP")
+    parser.add_argument("-c", "--cores", type=int, default=16,
+                        help="Number of CPU cores")
+    parser.add_argument("-m", "--mem", type=int, default=8000,
+                        help="Memory per core in MB")
+    parser.add_argument("--name", default="znp",
+                        help="Base name for output files")
+    args = parser.parse_args()
+
+    xyz_path = Path(args.xyz)
+    check_xyz(xyz_path)
+
+    stem        = args.name
+    mult        = 3  # triplet
+
+    t1_opt_stem = f"{stem}_b3lyp_t1_opt"
+    t1_sp_stem  = f"{stem}_camb3lyp_t1_sp"
+
+    t1_opt_file = Path(t1_opt_stem + ".inp")
+    t1_sp_file  = Path(t1_sp_stem  + ".inp")
+    t1_opt_xyz  = Path(t1_opt_stem + ".xyz")
+    run_file    = Path(f"run_{stem}_det_workflow.sh")
+
+    print(f"\nGenerating ORCA inputs for ZnP DET workflow...")
+    print(f"  XYZ file:  {xyz_path}")
+    print(f"  Charge:    {args.charge}")
+    print(f"  Mult:      {mult} (triplet)")
+    print(f"  Basis:     def2-TZVP")
+    print(f"  Cores:     {args.cores}")
+    print(f"  Mem/core:  {args.mem} MB")
+    print()
+
+    write_file(t1_opt_file, T1_OPT_TEMPLATE.format(
+        charge=args.charge,
+        mult=mult,
+        xyz=xyz_path.name,
+        cores=args.cores,
+        mem=args.mem,
+    ))
+
+    write_file(t1_sp_file, T1_SP_TEMPLATE.format(
+        charge=args.charge,
+        mult=mult,
+        xyz=t1_opt_xyz,
+        cores=args.cores,
+        mem=args.mem,
+    ))
+
+    write_file(run_file, RUN_TEMPLATE.format(
+        t1_opt_file=t1_opt_file,
+        t1_sp_file=t1_sp_file,
+        t1_opt_stem=t1_opt_stem,
+        t1_sp_stem=t1_sp_stem,
+        cores=args.cores,
+        mem=args.mem,
+    ), executable=True)
+
+    print(f"\nDone! Files generated:")
+    print(f"  {t1_opt_file}  — T1 geometry optimisation")
+    print(f"  {t1_sp_file}   — T1 single point")
+    print(f"  {run_file}     — submission script")
+    print(f"\nNext steps after T1 SP completes:")
+    print(f"  1. Check <S**2> in {t1_sp_stem}.out (~2.0 expected)")
+    print(f"  2. Find SOMO-1 and SOMO indices from ORBITAL ENERGIES section")
+
+
+if __name__ == "__main__":
+    main()
