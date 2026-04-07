@@ -157,7 +157,7 @@ def main():
     ), executable=True)
 
     print(f"\nDone! Files generated:")
-    print(f"  {t1_opt_file}  — T1 geometry optimisation")
+    print(f"  {t1_opt_file}  — T1 geometry optimization")
     print(f"  {t1_sp_file}   — T1 single point")
     print(f"  {run_file}     — submission script")
 
