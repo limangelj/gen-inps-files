@@ -3,7 +3,7 @@
 Generate ORCA input files for PMI DET workflow — Mode A (separate molecules).
 
 Usage:
-    python generate_pmi_inputs.py PMI.xyz 0 --cores 16 --mem 4000
+    python gen_pmi_inputs.py PMI.xyz 0 --cores 16 --mem 4000
 
 Workflow:
     Step 1: T1 opt  (UKS B3LYP / def2-TZVP / D3BJ, triplet)
@@ -21,13 +21,8 @@ import os
 # ------------------------------------------------------------
 
 T1_OPT_TEMPLATE = """\
-# PMI T1 geometry optimisation
-# UKS B3LYP / def2-TZVP / D3BJ
-# Triplet state
-
 ! UKS B3LYP D3BJ OPT TightOpt TightSCF
 ! def2-TZVP def2/J RIJCOSX
-! Grid5 FinalGrid6
 
 %pal nprocs {cores} end
 %maxcore {mem}
@@ -44,13 +39,8 @@ end
 """
 
 T1_SP_TEMPLATE = """\
-# PMI T1 single point on T1 optimised geometry
-# UKS CAM-B3LYP / def2-TZVP / D3BJ
-# Triplet state
-
 ! UKS CAM-B3LYP D3BJ TightSCF
 ! def2-TZVP def2/J RIJCOSX
-! Grid5 FinalGrid6
 
 %pal nprocs {cores} end
 %maxcore {mem}
@@ -64,14 +54,7 @@ end
 
 RUN_TEMPLATE = """\
 #!/bin/bash
-# ------------------------------------------------------------
-# PMI DET Workflow
-# Step 1: T1 opt  (triplet) — UKS B3LYP / def2-TZVP / D3BJ
-# Step 2: T1 SP   (triplet) — UKS CAM-B3LYP / def2-TZVP / D3BJ
-#         → SOMO-1 = pi_A, SOMO = pi*_A
-# ------------------------------------------------------------
-
-# Step 1: T1 geometry optimisation
+# Step 1: T1 geometry optimization
 t1_opt_jid=$(qorca -i ./{t1_opt_file} -c {cores} -m {mem})
 echo "Submitted PMI T1 opt: $t1_opt_jid"
 
@@ -129,8 +112,8 @@ def main():
     stem        = args.name
     mult        = 3  # triplet
 
-    t1_opt_stem = f"{stem}_b3lyp_t1_opt"
-    t1_sp_stem  = f"{stem}_camb3lyp_t1_sp"
+    t1_opt_stem = f"{stem}_b3lyp_def2-TZVP_t1_opt"
+    t1_sp_stem  = f"{stem}_cam-b3lyp_def2-TZVP_t1_sp"
 
     t1_opt_file = Path(t1_opt_stem + ".inp")
     t1_sp_file  = Path(t1_sp_stem  + ".inp")
@@ -172,12 +155,9 @@ def main():
     ), executable=True)
 
     print(f"\nDone! Files generated:")
-    print(f"  {t1_opt_file}  — T1 geometry optimisation")
+    print(f"  {t1_opt_file}  — T1 geometry optimization")
     print(f"  {t1_sp_file}   — T1 single point")
     print(f"  {run_file}     — submission script")
-    print(f"\nNext steps after T1 SP completes:")
-    print(f"  1. Check <S**2> in {t1_sp_stem}.out (~2.0 expected)")
-    print(f"  2. Find SOMO-1 and SOMO indices from ORBITAL ENERGIES section")
 
 
 if __name__ == "__main__":
