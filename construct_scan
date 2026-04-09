@@ -1,0 +1,227 @@
+#!/usr/bin/env python3
+"""
+Takes ZnP_PMI_B.xyz and generates dimer geometries for a displacement scan.
+
+Anchor atoms (1-based, as in Avogadro 2):
+    Atom 70 (index 69, 0-based) = C on ZnP side
+    Atom 74 (index 73, 0-based) = C on PMI side
+
+For each target distance:
+    1. Split molecule into ZnP fragment (atoms containing index 69)
+       and PMI fragment (atoms containing index 73) at X midpoint
+    2. Align both fragments to the same Z plane (match Z centroids)
+    3. Translate PMI along X so anchor atoms are exactly --dist apart
+    4. Write combined xyz file
+
+Usage:
+    python construct_scan.py ZnP_PMI_B.xyz
+    python construct_scan.py ZnP_PMI_B.xyz --dist 3.5 4.0 4.5 5.0 5.5 6.0 7.0 8.0
+    python construct_scan.py ZnP_PMI_B.xyz --dist 3.5
+"""
+
+import numpy as np
+from pathlib import Path
+import argparse
+import sys
+
+# 1-based anchor indices as shown in Avogadro 2
+ZNP_ANCHOR_1B = 70   # 0-based: 69
+PMI_ANCHOR_1B = 74   # 0-based: 73
+ZNP_ANCHOR    = ZNP_ANCHOR_1B - 1
+PMI_ANCHOR    = PMI_ANCHOR_1B - 1
+
+# X coordinate that splits ZnP from PMI
+# Gap between fragments: X=10.977 (H, PMI side) to X=12.350 (C, ZnP side)
+# ZnP anchor (index 69) at X=12.408 must be on ZnP side
+# PMI anchor (index 73) at X=9.938 must be on PMI side
+SPLIT_X = 11.7
+
+
+def read_xyz(filepath):
+    atoms = []
+    with open(filepath) as f:
+        lines = f.readlines()
+    natoms  = int(lines[0].strip())
+    comment = lines[1].strip()
+    for line in lines[2:2+natoms]:
+        parts = line.split()
+        if len(parts) == 4:
+            atoms.append((parts[0],
+                          float(parts[1]),
+                          float(parts[2]),
+                          float(parts[3])))
+    return atoms, comment
+
+
+def write_xyz(filepath, atoms, comment=""):
+    with open(filepath, "w") as f:
+        f.write(f"{len(atoms)}\n")
+        f.write(f"{comment}\n")
+        for elem, x, y, z in atoms:
+            f.write(f"{elem:4s}  {x:16.10f}  {y:16.10f}  {z:16.10f}\n")
+
+
+def get_coords(atoms):
+    return np.array([[x, y, z] for _, x, y, z in atoms])
+
+
+def set_coords(atoms, coords):
+    return [(atoms[i][0], coords[i,0], coords[i,1], coords[i,2])
+            for i in range(len(atoms))]
+
+
+def build_dimer(all_atoms, target_dist):
+    """
+    Split molecule at SPLIT_X, align Z planes, place anchors at target_dist.
+    Returns combined atom list.
+    """
+    coords = get_coords(all_atoms)
+    elems  = [a[0] for a in all_atoms]
+
+    # Split into ZnP and PMI fragments
+    # Initial split by X coordinate
+    znp_idx = [i for i in range(len(all_atoms)) if coords[i,0] >= SPLIT_X]
+    pmi_idx = [i for i in range(len(all_atoms)) if coords[i,0] < SPLIT_X]
+
+    # Reassign H atoms to the fragment containing their nearest heavy atom
+    # This prevents floating H atoms at the split boundary
+    for i in range(len(all_atoms)):
+        if all_atoms[i][0] != 'H':
+            continue
+        # Find nearest heavy atom
+        min_d = np.inf
+        nearest = -1
+        for j in range(len(all_atoms)):
+            if j == i or all_atoms[j][0] == 'H':
+                continue
+            d = np.linalg.norm(coords[i] - coords[j])
+            if d < min_d:
+                min_d = d
+                nearest = j
+        # Move H to same fragment as its nearest heavy atom
+        if nearest in znp_idx and i in pmi_idx:
+            pmi_idx.remove(i)
+            znp_idx.append(i)
+        elif nearest in pmi_idx and i in znp_idx:
+            znp_idx.remove(i)
+            pmi_idx.append(i)
+
+    znp_atoms = [all_atoms[i] for i in znp_idx]
+    pmi_atoms = [all_atoms[i] for i in pmi_idx]
+
+    znp_coords = get_coords(znp_atoms)
+    pmi_coords = get_coords(pmi_atoms)
+
+    # Map global anchor indices to local fragment indices
+    znp_local_anchor = znp_idx.index(ZNP_ANCHOR)
+    pmi_local_anchor = pmi_idx.index(PMI_ANCHOR)
+
+    # --- Step 1: align Z planes ---
+    # Shift PMI so its heavy atom Z mean matches ZnP heavy atom Z mean
+    znp_heavy_z = [znp_coords[i,2] for i,a in enumerate(znp_atoms) if a[0] != 'H']
+    pmi_heavy_z = [pmi_coords[i,2] for i,a in enumerate(pmi_atoms) if a[0] != 'H']
+    tz = np.mean(znp_heavy_z) - np.mean(pmi_heavy_z)
+    pmi_coords[:, 2] += tz
+
+    # --- Step 2: translate PMI along X so anchors are target_dist apart ---
+    znp_anchor_x = znp_coords[znp_local_anchor, 0]
+    pmi_anchor_x = pmi_coords[pmi_local_anchor, 0]
+
+    # PMI anchor is to the LEFT of ZnP anchor (PMI at lower X)
+    tx = (znp_anchor_x - target_dist) - pmi_anchor_x
+    pmi_coords[:, 0] += tx
+
+    # --- Verify ---
+    znp_ap = znp_coords[znp_local_anchor]
+    pmi_ap = pmi_coords[pmi_local_anchor]
+    actual_dist  = np.linalg.norm(znp_ap - pmi_ap)
+    actual_zdiff = abs(znp_ap[2] - pmi_ap[2])
+
+    # --- Clash check ---
+    min_dist = np.inf
+    for r1 in znp_coords:
+        dists = np.linalg.norm(pmi_coords - r1, axis=1)
+        min_dist = min(min_dist, dists.min())
+
+    pmi_atoms_new = set_coords(pmi_atoms, pmi_coords)
+    combined = znp_atoms + pmi_atoms_new
+
+    return combined, actual_dist, actual_zdiff, min_dist, len(znp_atoms), len(pmi_atoms)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Generate ZnP/PMI dimer displacement scan xyz files",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
+    parser.add_argument("xyz", help="Input xyz file (ZnP_PMI_B.xyz)")
+    parser.add_argument(
+        "--dist", nargs="+", type=float,
+        default=[3.5, 4.0, 4.5, 5.0, 5.5, 6.0, 7.0, 8.0],
+        help="Anchor-to-anchor distances in Å"
+    )
+    parser.add_argument(
+        "--prefix", default="dimer",
+        help="Output filename prefix"
+    )
+    args = parser.parse_args()
+
+    xyz_path = Path(args.xyz)
+    if not xyz_path.exists():
+        print(f"Error: {xyz_path} not found")
+        sys.exit(1)
+
+    all_atoms, comment = read_xyz(xyz_path)
+    natoms = len(all_atoms)
+    coords = get_coords(all_atoms)
+
+    # Verify anchor atoms
+    znp_elem = all_atoms[ZNP_ANCHOR][0]
+    pmi_elem = all_atoms[PMI_ANCHOR][0]
+
+    print(f"\nZnP/PMI dimer displacement scan")
+    print(f"{'='*55}")
+    print(f"  Input:          {xyz_path.name}  ({natoms} atoms)")
+    print(f"  ZnP anchor:     atom {ZNP_ANCHOR_1B} (1-based) = "
+          f"index {ZNP_ANCHOR} (0-based) = {znp_elem}  "
+          f"({coords[ZNP_ANCHOR,0]:.3f}, {coords[ZNP_ANCHOR,1]:.3f}, "
+          f"{coords[ZNP_ANCHOR,2]:.3f})")
+    print(f"  PMI anchor:     atom {PMI_ANCHOR_1B} (1-based) = "
+          f"index {PMI_ANCHOR} (0-based) = {pmi_elem}  "
+          f"({coords[PMI_ANCHOR,0]:.3f}, {coords[PMI_ANCHOR,1]:.3f}, "
+          f"{coords[PMI_ANCHOR,2]:.3f})")
+    print(f"  Split X:        {SPLIT_X} Å")
+    print(f"  Distances:      {args.dist} Å")
+
+    if znp_elem != 'C':
+        print(f"  WARNING: ZnP anchor is {znp_elem}, expected C")
+    if pmi_elem != 'C':
+        print(f"  WARNING: PMI anchor is {pmi_elem}, expected C")
+
+    print(f"\n{'Dist':>6}  {'Actual':>8}  {'Z-diff':>8}  "
+          f"{'Min D':>8}  {'Clash':>6}  Output")
+    print(f"{'----':>6}  {'------':>8}  {'------':>8}  "
+          f"{'-----':>8}  {'-----':>6}  ------")
+
+    for dist in args.dist:
+        combined, actual, zdiff, min_d, nznp, npmi = build_dimer(
+            all_atoms, dist
+        )
+
+        clash = "YES" if min_d < 1.5 else "no"
+        out_path = Path(f"{args.prefix}_{dist:.1f}A.xyz")
+
+        comment_out = (f"ZnP/PMI dimer | anchor dist={actual:.3f} A | "
+                       f"ZnP atoms 1-{nznp} PMI atoms {nznp+1}-{len(combined)}")
+        write_xyz(out_path, combined, comment_out)
+
+        print(f"{dist:>6.1f}  {actual:>8.4f}  {zdiff:>8.4f}  "
+              f"{min_d:>8.3f}  {clash:>6}  {out_path.name}")
+
+    print(f"\nDone. {len(args.dist)} files written.")
+    print(f"\nIn Avogadro 2 dimer files (1-based):")
+    print(f"  ZnP anchor → atom {ZNP_ANCHOR_1B}")
+    print(f"  PMI anchor → atom {PMI_ANCHOR_1B}")
+
+
+if __name__
