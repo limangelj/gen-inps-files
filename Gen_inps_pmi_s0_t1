@@ -5,10 +5,10 @@ import os
 from pathlib import Path
 import subprocess
 
-_HERE = Path(__file__).absolute().parent
+CONFIG_SH = Path('/nfs/cluster/scripts/config.sh')
 
 # source config file and get environment vars
-proc = subprocess.Popen(f"source {_HERE / 'config.sh'} && env", stdout=subprocess.PIPE, shell=True, executable='/bin/bash')
+proc = subprocess.Popen(f"source {CONFIG_SH} && env", stdout=subprocess.PIPE, shell=True, executable='/bin/bash')
 for line in proc.stdout:
     (key, _, value) = line.decode().partition("=")
     os.environ[key] = value.strip()
