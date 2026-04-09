@@ -1,0 +1,89 @@
+#!/usr/bin/env python3
+
+import argparse
+import datetime
+import os
+from pathlib import Path
+from rdkit import Chem
+import subprocess
+
+_HERE = Path(__file__).absolute().parent
+
+# source config file and get environment vars
+proc = subprocess.Popen(f"source {_HERE / 'config.sh'} && env", stdout=subprocess.PIPE, shell=True, executable='/bin/bash')
+for line in proc.stdout:
+    (key, _, value) = line.decode().partition("=")
+    os.environ[key] = value.strip()
+orca_root_out_dir_path = Path(os.environ.get('orca_root_out_dir_path'))
+
+S0_OPT_TEMPLATE = """\
+! B3LYP D3BJ OPT TightOpt TightSCF
+! def2-TZVP def2/J RIJCOSX
+%pal nprocs 16 end
+%maxcore 3000
+%geom
+  MaxIter 200
+end
+%scf
+  MaxIter 500
+end
+* xyzfile {charge} {mult} {xyz}
+"""
+
+T1_SP_TEMPLATE = """\
+! UKS CAM-B3LYP D3BJ TightSCF
+! def2-TZVP def2/J RIJCOSX
+%pal nprocs 16 end
+%maxcore 8000
+%scf
+  MaxIter 500
+end
+* xyzfile {charge} {mult} {xyz}
+"""
+
+def main():
+    parser = argparse.ArgumentParser(description='Generate ORCA input files for PMI S0 opt + T1 single-point calculations')
+    parser.add_argument('xyz', type=Path, help='Input XYZ file')
+    parser.add_argument('smiles', type=Path, help='Input SMILES file (used for charge determination)')
+    args = parser.parse_args()
+
+    molecule = args.xyz.stem
+    year_month_day = datetime.datetime.now().strftime('%Y-%m-%d')
+    output_dir = orca_root_out_dir_path / (molecule + '_' + year_month_day)
+
+    # read smiles file to determine charge
+    with open(args.smiles, 'r') as f:
+        smiles = f.read().strip()
+    charge = Chem.GetFormalCharge(Chem.MolFromSmiles(smiles))
+
+    # bash file for queueing jobs
+    run_file_text = '#!/bin/bash\n'
+
+    # s0 geometry optimization
+    s0_opt_inp = Path(molecule + '_b3lyp_def2-TZVP_s0_opt.inp')
+    s0_opt_xyz = s0_opt_inp.with_suffix('.xyz')
+    s0_opt_inp.write_text(S0_OPT_TEMPLATE.format(
+        charge=charge,
+        mult=1,
+        xyz=args.xyz.name
+    ))
+    run_file_text += f"s0_opt_jid=$(qorca --output_dir {output_dir} --input ./{s0_opt_inp} --link {args.xyz} )\n"
+
+    # t1 single-point on s0 geometry
+    t1_sp_inp = Path(molecule + '_cam-b3lyp_def2-TZVP_s0_opt_t1_sp.inp')
+    t1_sp_inp.write_text(T1_SP_TEMPLATE.format(
+        charge=charge,
+        mult=3,
+        xyz=s0_opt_xyz
+    ))
+    run_file_text += f"qorca --output_dir {output_dir} --input ./{t1_sp_inp} --link {output_dir}/{s0_opt_xyz} --job_dep ${{s0_opt_jid}}\n"
+
+    # create runfile
+    run_file = Path('run_PMI_S0_T1.sh')
+    run_file.write_text(run_file_text)
+
+    # make runfile executable
+    os.chmod(run_file, 0o755)
+
+if __name__ == "__main__":
+    main()
