@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
-
 import argparse
 import datetime
 import os
 from pathlib import Path
-from rdkit import Chem
 import subprocess
 
 _HERE = Path(__file__).absolute().parent
@@ -44,17 +42,13 @@ end
 def main():
     parser = argparse.ArgumentParser(description='Generate ORCA input files for PMI S0 opt + T1 single-point calculations')
     parser.add_argument('xyz', type=Path, help='Input XYZ file')
-    parser.add_argument('smiles', type=Path, help='Input SMILES file (used for charge determination)')
+    parser.add_argument('-c', '--charge', type=int, default=0, help='Formal charge of the molecule (default: 0)')
     args = parser.parse_args()
 
     molecule = args.xyz.stem
+    charge = args.charge
     year_month_day = datetime.datetime.now().strftime('%Y-%m-%d')
     output_dir = orca_root_out_dir_path / (molecule + '_' + year_month_day)
-
-    # read smiles file to determine charge
-    with open(args.smiles, 'r') as f:
-        smiles = f.read().strip()
-    charge = Chem.GetFormalCharge(Chem.MolFromSmiles(smiles))
 
     # bash file for queueing jobs
     run_file_text = '#!/bin/bash\n'
@@ -67,7 +61,7 @@ def main():
         mult=1,
         xyz=args.xyz.name
     ))
-    run_file_text += f"s0_opt_jid=$(qorca --output_dir {output_dir} --input ./{s0_opt_inp} --link {args.xyz} )\n"
+    run_file_text += f"s0_opt_jid=$(qorca --output_dir {output_dir} --input ./{s0_opt_inp} --link {args.xyz})\n"
 
     # t1 single-point on s0 geometry
     t1_sp_inp = Path(molecule + '_cam-b3lyp_def2-TZVP_s0_opt_t1_sp.inp')
