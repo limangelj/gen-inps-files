@@ -70,7 +70,7 @@ def main():
         mult=3,
         xyz=s0_opt_xyz
     ))
-    run_file_text += f"qorca --output_dir {output_dir} --input ./{t1_sp_inp} --link {output_dir}/{s0_opt_xyz} --job_dep ${{s0_opt_jid}}\n"
+    run_file_text += f"t1_sp_jid=$qorca --output_dir {output_dir} --input ./{t1_sp_inp} --link {output_dir}/{s0_opt_xyz} --job_dep ${{s0_opt_jid}}\n"
 
     # create runfile
     run_file = Path('run_PMI_S0_T1.sh')
