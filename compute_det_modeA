@@ -215,24 +215,23 @@ def visualise_mos(fields_d, fields_a, grids_d, grids_a,
     panel_configs = [
         (fields_d[0], x_d, y_d, z_d,
          fields_a[0], x_as, y_as, z_as,
-         "π_D (ZnP SOMO-1) | π_A (PMI SOMO-1)"),
+         "pi_D | pi_A"),
         (fields_d[1], x_d, y_d, z_d,
          fields_a[1], x_as, y_as, z_as,
-         "π*_D (ZnP SOMO) | π*_A (PMI SOMO)"),
+         "pi*_D | pi*_A"),
         (fields_d[0], x_d, y_d, z_d,
          fields_a[1], x_as, y_as, z_as,
-         "π_D (ZnP SOMO-1) | π*_A (PMI SOMO)"),
+         "pi_D | pi*_A"),
         (fields_d[1], x_d, y_d, z_d,
          fields_a[0], x_as, y_as, z_as,
-         "π*_D (ZnP SOMO) | π_A (PMI SOMO-1)"),
+         "pi*_D | pi_A"),
     ]
 
     fig = make_subplots(
         rows=2, cols=2,
-        subplot_titles=[str(c[6]) for c in panel_configs],
         specs=[[{"type":"scene"},{"type":"scene"}],
                [{"type":"scene"},{"type":"scene"}]],
-        horizontal_spacing=0.02, vertical_spacing=0.1,
+        horizontal_spacing=0.05, vertical_spacing=0.12,
     )
 
     for (row, col), cfg in zip([(1,1),(1,2),(2,1),(2,2)], panel_configs):
@@ -259,27 +258,43 @@ def visualise_mos(fields_d, fields_a, grids_d, grids_a,
 
     scene_style = dict(
         bgcolor='#111122',
-        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False,
-                   title='X (Å)'),
-        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False,
-                   title='Y (Å)'),
-        zaxis=dict(showgrid=False, zeroline=False, showticklabels=False,
-                   title='Z (Å)'),
+        xaxis=dict(showgrid=False, zeroline=False,
+                   showticklabels=False, title=''),
+        yaxis=dict(showgrid=False, zeroline=False,
+                   showticklabels=False, title=''),
+        zaxis=dict(showgrid=False, zeroline=False,
+                   showticklabels=False, title=''),
     )
     for scene in ['scene','scene2','scene3','scene4']:
         fig.update_layout(**{scene: scene_style})
 
+    # Add panel titles manually as clean annotations
+    panel_titles = [c[8] for c in panel_configs]
+    title_positions = [(0.25, 0.97), (0.75, 0.97),
+                       (0.25, 0.47), (0.75, 0.47)]
+    annotations = [
+        dict(
+            text=title, x=x, y=y,
+            xref='paper', yref='paper',
+            showarrow=False,
+            font=dict(size=13, color='white', family='monospace'),
+            xanchor='center', yanchor='bottom',
+        )
+        for title, (x, y) in zip(panel_titles, title_positions)
+    ]
+
+    fig.update_layout(annotations=annotations)
+
     fig.update_layout(
         title=dict(
-            text=(f"ZnP/PMI Mode A MO Visualisation — "
-                  f"edge-to-edge {EDGE_TO_EDGE_DIST} Å<br>"
-                  f"<sup>Blue = ZnP donor | Red = PMI acceptor | "
-                  f"isoval = ±{ISOVAL}</sup>"),
-            font=dict(size=14, color='white'),
+            text=(f"ZnP/PMI Mode A — edge-to-edge {EDGE_TO_EDGE_DIST} Å  |  "
+                  f"Blue=ZnP  Red=PMI  isoval=±{ISOVAL}"),
+            font=dict(size=13, color='white', family='monospace'),
+            x=0.5, xanchor='center',
         ),
         height=900, width=1200,
         paper_bgcolor='#111122',
-        font=dict(color='white'),
+        font=dict(color='white', family='monospace'),
     )
 
     fig.write_html(output_html)
