@@ -299,7 +299,7 @@ def visualise_mos(mol_donor, pi_D, pistar_D,
         annotations=annotations,
         title=dict(
             text=(f"ZnP/PMI Mode A (molden) — {EDGE_TO_EDGE_DIST} Å anchor-to-anchor  |  "
-                  f"Blue=ZnP  Red=PMI  isoval=±{isoval}  V_DET={V_DET:.3e}"),
+                  f"Blue=ZnP  Red=PMI  isoval=±{isoval}  V_DET= {V_DET:.3e}"),
             font=dict(size=12, color="white", family="monospace"),
             x=0.5, xanchor="center",
         ),
