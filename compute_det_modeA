@@ -1,0 +1,254 @@
+#!/usr/bin/env python3
+"""
+Compute Dexter Energy Transfer (DET) orbital overlaps for ZnP/PMI at x=0.
+
+Mode A: separate molecule calculations, cube file overlaps.
+Donor:    ZnP  T1 SP -> SOMO-1 = pi_D,  SOMO = pi*_D
+Acceptor: PMI  T1 SP -> SOMO-1 = pi_A,  SOMO = pi*_A
+
+Edge-to-edge geometry: PMI placed 3.5 Å from ZnP along X axis.
+Both cube files are on their own grids — PMI grid is shifted to
+place the two molecules at the correct separation before integration.
+No displacement scan — single point at x=0.
+"""
+
+import numpy as np
+from scipy.interpolate import RegularGridInterpolator
+
+# ------------------------------------------------------------
+# CUBE FILE PATHS 
+# ------------------------------------------------------------
+CUBE_PI_D     = "/nfs/outputs/dexter_cal/ZnP-PMI/znp_cam-b3lyp_def2-TZVP_t1_sp.mo174a.cube"
+CUBE_PISTAR_D = "/nfs/outputs/dexter_cal/ZnP-PMI/znp_cam-b3lyp_def2-TZVP_t1_sp.mo175a.cube"
+CUBE_PI_A     = "/nfs/outputs/dexter_cal/ZnP-PMI/PMI_cam-b3lyp_def2-TZVP_s0_opt_t1_sp.mo194a.cube"
+CUBE_PISTAR_A = "/nfs/outputs/dexter_cal/ZnP-PMI/PMI_cam-b3lyp_def2-TZVP_s0_opt_t1_sp.mo195a.cube"
+
+# ------------------------------------------------------------
+# GEOMETRY PARAMETERS
+# ------------------------------------------------------------
+EDGE_TO_EDGE_DIST = 3.5    # Å — separation along X at x=0
+
+
+# ------------------------------------------------------------
+# CUBE FILE READER
+# ------------------------------------------------------------
+
+def read_cube(filepath):
+    """
+    Read an ORCA cube file.
+    Returns:
+        origin : (3,) array in Angstrom
+        axes   : (3,3) array of step vectors in Angstrom
+        npts   : (3,) int array
+        field  : (nx, ny, nz) array of MO values
+    """
+    with open(filepath) as f:
+        lines = f.readlines()
+
+    natoms = abs(int(lines[2].split()[0]))
+    origin = np.array([float(x) for x in lines[2].split()[1:4]]) * 0.529177
+
+    npts = np.zeros(3, dtype=int)
+    axes = np.zeros((3, 3))
+    for i in range(3):
+        p = lines[3+i].split()
+        npts[i]   = int(p[0])
+        axes[i,:] = [float(x) * 0.529177 for x in p[1:4]]
+
+    # Skip atom lines + possible ORCA MO index line
+    expected = npts[0] * npts[1] * npts[2]
+    vals = []
+    for line in lines[6+natoms:]:
+        parts = line.split()
+        if not parts:
+            continue
+        # Skip ORCA MO index header (1-2 integer tokens)
+        if len(parts) <= 2:
+            try:
+                [int(x) for x in parts]
+                continue
+            except ValueError:
+                pass
+        vals.extend([float(x) for x in parts])
+
+    field = np.array(vals[:expected]).reshape(npts[0], npts[1], npts[2])
+    return origin, axes, npts, field
+
+
+def get_grid_coords(origin, axes, npts):
+    """Return 1D coordinate arrays along each axis."""
+    x = origin[0] + np.arange(npts[0]) * axes[0, 0]
+    y = origin[1] + np.arange(npts[1]) * axes[1, 1]
+    z = origin[2] + np.arange(npts[2]) * axes[2, 2]
+    return x, y, z
+
+
+def voxel_volume(axes):
+    """Volume element dV in Å^3."""
+    return abs(np.dot(axes[0], np.cross(axes[1], axes[2])))
+
+
+def get_mol_centroid_from_cube(filepath):
+    """Extract heavy atom centroid from cube file header (in Angstrom)."""
+    ELEM_NUM = {1: 'H', 6: 'C', 7: 'N', 8: 'O', 30: 'Zn'}
+    with open(filepath) as f:
+        lines = f.readlines()
+    natoms = abs(int(lines[2].split()[0]))
+    coords = []
+    elems  = []
+    for line in lines[6:6+natoms]:
+        parts = line.split()
+        if len(parts) < 5:
+            continue
+        elem = ELEM_NUM.get(int(parts[0]), 'X')
+        x = float(parts[2]) * 0.529177
+        y = float(parts[3]) * 0.529177
+        z = float(parts[4]) * 0.529177
+        coords.append([x, y, z])
+        elems.append(elem)
+    coords = np.array(coords)
+    heavy  = np.array([coords[i] for i,e in enumerate(elems) if e != 'H'])
+    return heavy.mean(axis=0)
+
+
+def shift_and_interpolate(field_a, x_a, y_a, z_a,
+                           x_d, y_d, z_d,
+                           centroid_d, centroid_a,
+                           target_dist):
+    """
+    Shift acceptor grid so its centroid is at donor centroid + target_dist
+    along X and coplanar in Y and Z, then interpolate onto donor grid.
+    """
+    dx = (centroid_d[0] + target_dist) - centroid_a[0]
+    dy = centroid_d[1] - centroid_a[1]
+    dz = centroid_d[2] - centroid_a[2]
+
+    x_a_s = x_a + dx
+    y_a_s = y_a + dy
+    z_a_s = z_a + dz
+
+    interp = RegularGridInterpolator(
+        (x_a_s, y_a_s, z_a_s),
+        field_a,
+        method='linear',
+        bounds_error=False,
+        fill_value=0.0
+    )
+
+    X, Y, Z = np.meshgrid(x_d, y_d, z_d, indexing='ij')
+    pts = np.stack([X.ravel(), Y.ravel(), Z.ravel()], axis=-1)
+    field_on_donor = interp(pts).reshape(len(x_d), len(y_d), len(z_d))
+
+    return field_on_donor, dx, dy, dz
+
+
+def normalisation(field, dV):
+    return np.sum(field**2) * dV
+
+
+def compute_overlap(field_d, field_a, dV):
+    return np.sum(field_d * field_a) * dV
+
+
+# ------------------------------------------------------------
+# MAIN
+# ------------------------------------------------------------
+
+def main():
+    print("=" * 60)
+    print("ZnP/PMI DET Coupling — Mode A, x=0, edge-to-edge 3.5 Å")
+    print("Cube file overlap integrals")
+    print("=" * 60)
+
+    # --- Read cube files ---
+    print("\nReading cube files...")
+    origin_d, axes_d, npts_d, field_pi_D     = read_cube(CUBE_PI_D)
+    _,        _,      _,      field_pistar_D  = read_cube(CUBE_PISTAR_D)
+    origin_a, axes_a, npts_a, field_pi_A     = read_cube(CUBE_PI_A)
+    _,        _,      _,      field_pistar_A  = read_cube(CUBE_PISTAR_A)
+
+    print(f"  ZnP SOMO-1 grid: {npts_d[0]}x{npts_d[1]}x{npts_d[2]}")
+    print(f"  PMI SOMO-1 grid: {npts_a[0]}x{npts_a[1]}x{npts_a[2]}")
+
+    x_d, y_d, z_d = get_grid_coords(origin_d, axes_d, npts_d)
+    x_a, y_a, z_a = get_grid_coords(origin_a, axes_a, npts_a)
+    dV_d = voxel_volume(axes_d)
+    dV_a = voxel_volume(axes_a)
+
+    print(f"  ZnP voxel vol: {dV_d:.6f} Å³")
+    print(f"  PMI voxel vol: {dV_a:.6f} Å³")
+
+    # --- Get molecular centroids ---
+    print("\nExtracting centroids from cube headers...")
+    centroid_d = get_mol_centroid_from_cube(CUBE_PI_D)
+    centroid_a = get_mol_centroid_from_cube(CUBE_PI_A)
+    print(f"  ZnP centroid: ({centroid_d[0]:.3f}, {centroid_d[1]:.3f}, {centroid_d[2]:.3f}) Å")
+    print(f"  PMI centroid: ({centroid_a[0]:.3f}, {centroid_a[1]:.3f}, {centroid_a[2]:.3f}) Å")
+
+    # --- Normalisation ---
+    print("\nNormalisation check (should be ~1.0):")
+    norm_pi_D     = normalisation(field_pi_D,     dV_d)
+    norm_pistar_D = normalisation(field_pistar_D,  dV_d)
+    norm_pi_A     = normalisation(field_pi_A,     dV_a)
+    norm_pistar_A = normalisation(field_pistar_A,  dV_a)
+    print(f"  ∫|pi_D  |² dV = {norm_pi_D:.4f}")
+    print(f"  ∫|pi*_D |² dV = {norm_pistar_D:.4f}")
+    print(f"  ∫|pi_A  |² dV = {norm_pi_A:.4f}")
+    print(f"  ∫|pi*_A |² dV = {norm_pistar_A:.4f}")
+
+    c_pi_D     = 1.0 / np.sqrt(norm_pi_D)     if norm_pi_D     > 0 else 1.0
+    c_pistar_D = 1.0 / np.sqrt(norm_pistar_D)  if norm_pistar_D > 0 else 1.0
+    c_pi_A     = 1.0 / np.sqrt(norm_pi_A)     if norm_pi_A     > 0 else 1.0
+    c_pistar_A = 1.0 / np.sqrt(norm_pistar_A)  if norm_pistar_A > 0 else 1.0
+
+    # --- Shift PMI grid onto ZnP grid ---
+    print(f"\nShifting PMI grid to {EDGE_TO_EDGE_DIST:.1f} Å from ZnP along X...")
+    print("  Interpolating pi_A...")
+    field_pi_A_on_d, dx, dy, dz = shift_and_interpolate(
+        field_pi_A, x_a, y_a, z_a, x_d, y_d, z_d,
+        centroid_d, centroid_a, EDGE_TO_EDGE_DIST
+    )
+    print(f"    Translation: dX={dx:.4f}  dY={dy:.4f}  dZ={dz:.4f} Å")
+
+    print("  Interpolating pi*_A...")
+    field_pistar_A_on_d, _, _, _ = shift_and_interpolate(
+        field_pistar_A, x_a, y_a, z_a, x_d, y_d, z_d,
+        centroid_d, centroid_a, EDGE_TO_EDGE_DIST
+    )
+
+    # --- Compute overlaps ---
+    print("\nComputing overlap integrals...")
+    S_pi_raw     = compute_overlap(field_pi_D,    field_pi_A_on_d,     dV_d)
+    S_pistar_raw = compute_overlap(field_pistar_D, field_pistar_A_on_d, dV_d)
+
+    S_pi_corr     = S_pi_raw     * c_pi_D    * c_pi_A
+    S_pistar_corr = S_pistar_raw * c_pistar_D * c_pistar_A
+
+    V_DET_raw  = S_pi_raw     * S_pistar_raw
+    V_DET_corr = S_pi_corr    * S_pistar_corr
+
+    # --- Print results ---
+    print("\n" + "=" * 60)
+    print("RESULTS — ZnP/PMI DET at x=0, edge-to-edge 3.5 Å")
+    print("=" * 60)
+    print(f"\n  Raw (no normalisation correction):")
+    print(f"    S(pi_D,  pi_A)   = {S_pi_raw:.6e}")
+    print(f"    S(pi*_D, pi*_A)  = {S_pistar_raw:.6e}")
+    print(f"    V_DET            = {V_DET_raw:.6e}")
+    print(f"\n  Corrected (c² normalisation):")
+    print(f"    S(pi_D,  pi_A)   = {S_pi_corr:.6e}")
+    print(f"    S(pi*_D, pi*_A)  = {S_pistar_corr:.6e}")
+    print(f"    V_DET            = {V_DET_corr:.6e}")
+    print(f"\n  Correction factors:")
+    print(f"    c(pi_D)   = {c_pi_D:.4f}   c(pi*_D)  = {c_pistar_D:.4f}")
+    print(f"    c(pi_A)   = {c_pi_A:.4f}   c(pi*_A)  = {c_pistar_A:.4f}")
+    print(f"\n  Note: V_DET = kappa x S_pi x S_pi*")
+    print(f"        kappa for ZnP/PMI not yet determined")
+    print(f"        For reference: naphthalene kappa = 24 eV")
+    print(f"        V_DET (kappa=24) raw  = {24.0 * V_DET_raw:.6e} eV")
+    print(f"        V_DET (kappa=24) corr = {24.0 * V_DET_corr:.6e} eV")
+    print("=" * 60)
+
+
+if __name__ == "__main__":
+    main()
