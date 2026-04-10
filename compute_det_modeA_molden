@@ -1,0 +1,423 @@
+#!/usr/bin/env python3
+"""
+Compute Dexter Energy Transfer (DET) orbital overlaps for ZnP/PMI at x=0.
+
+Mode A: separate molecule calculations, molden-based analytical overlaps.
+Donor:    ZnP T1 SP  -> SOMO-1 = pi_D  (orbital 174), SOMO = pi*_D (orbital 175)
+Acceptor: PMI T1 SP  -> SOMO-1 = pi_A  (orbital 194), SOMO = pi*_A (orbital 195)
+
+Geometry: PMI anchor atom (atom 7) placed at ZnP anchor atom (atom 72) + 
+          EDGE_TO_EDGE_DIST along X, coplanar in Y and Z.
+
+Overlap computed analytically via PySCF AO integral matrix:
+    S(pi_D, pi_A) = C_D @ S_AO[ZnP_AOs, PMI_AOs] @ C_A
+No interpolation, no grid errors, normalisation guaranteed.
+
+Output: terminal only.
+"""
+
+import numpy as np
+from pyscf import gto
+from pyscf.tools import molden
+
+# ------------------------------------------------------------
+# FILE PATHS
+# ------------------------------------------------------------
+BASE_DIR      = "/nfs/outputs/dexter_cal/ZnP-PMI"
+
+DONOR_XYZ     = f"{BASE_DIR}/znp_cam-b3lyp_def2-TZVP_t1_sp.xyz"
+ACCEPTOR_XYZ  = "/nfs/outputs/dexter_cal/ZnP-PMI/PMI_cam-b3lyp_def2-TZVP_s0_opt_t1_sp.xyz"
+
+DONOR_MOLDEN  = f"{BASE_DIR}/znp_cam-b3lyp_def2-TZVP_t1_sp.molden.input"
+ACCEPTOR_MOLDEN = f"{BASE_DIR}/PMI_cam-b3lyp_def2-TZVP_s0_opt_t1_sp.molden.input"
+
+# ------------------------------------------------------------
+# ORBITAL INDICES (0-based)
+# ZnP:  SOMO-1 = alpha 174 = pi_D,   SOMO = alpha 175 = pi*_D
+# PMI:  SOMO-1 = alpha 194 = pi_A,   SOMO = alpha 195 = pi*_A
+# ------------------------------------------------------------
+DONOR_PI_IDX      = 174
+DONOR_PISTAR_IDX  = 175
+ACCEPT_PI_IDX     = 194
+ACCEPT_PISTAR_IDX = 195
+
+# ------------------------------------------------------------
+# GEOMETRY
+# ------------------------------------------------------------
+# Anchor atoms from xyz files (Angstrom)
+# ZnP atom 72 (1-based) = index 71 (0-based)
+ZNP_ANCHOR = np.array([15.6442,  0.5321, -10.0939])
+# PMI atom 7  (1-based) = index 6  (0-based)
+PMI_ANCHOR = np.array([-3.9594, -0.8593,  -1.1577])
+
+EDGE_TO_EDGE_DIST = 2.0   # Å anchor-to-anchor along X
+
+# ------------------------------------------------------------
+# BASIS — def2-TZVP for all elements
+# PySCF needs Zn specified explicitly
+# ------------------------------------------------------------
+BASIS = "def2-TZVP"
+
+# ------------------------------------------------------------
+# EXPECTED ORBITAL ENERGIES (Hartree) — for verification
+# Update from your ORCA output if needed
+# ------------------------------------------------------------
+EXPECTED_PI_D_EH      = -0.247353   # ZnP SOMO-1
+EXPECTED_PISTAR_D_EH  = -0.173329   # ZnP SOMO
+EXPECTED_PI_A_EH      = -0.275706   # PMI SOMO-1
+EXPECTED_PISTAR_A_EH  = -0.184768   # PMI SOMO
+TOLERANCE             =  0.005
+
+
+# ------------------------------------------------------------
+# HELPER FUNCTIONS
+# ------------------------------------------------------------
+
+def read_xyz(filepath):
+    atoms = []
+    with open(filepath) as f:
+        lines = f.readlines()
+    for line in lines[2:]:
+        parts = line.split()
+        if len(parts) == 4:
+            atoms.append((parts[0],
+                          float(parts[1]),
+                          float(parts[2]),
+                          float(parts[3])))
+    return atoms
+
+
+def atoms_to_pyscf_str(atoms):
+    return "; ".join(f"{e} {x:.8f} {y:.8f} {z:.8f}"
+                     for e, x, y, z in atoms)
+
+
+def shift_atoms(atoms, dx=0.0, dy=0.0, dz=0.0):
+    return [(e, x+dx, y+dy, z+dz) for e, x, y, z in atoms]
+
+
+def build_mol(atoms, basis, charge=0, spin=2):
+    mol = gto.Mole()
+    mol.atom    = atoms_to_pyscf_str(atoms)
+    mol.basis   = basis
+    mol.charge  = charge
+    mol.spin    = spin
+    mol.verbose = 0
+    mol.build()
+    return mol
+
+
+def load_molden_alpha(molden_file):
+    """Load alpha MO coefficients and energies from UHF molden file."""
+    result       = molden.load(molden_file)
+    mo_energy    = result[1]
+    mo_coeff     = result[2]
+    mo_coeff_arr = np.array(mo_coeff)
+    is_uhf       = mo_coeff_arr.ndim == 3
+    if is_uhf:
+        coeffs   = mo_coeff_arr[0]
+        energies = np.array(mo_energy)[0]
+    else:
+        coeffs   = mo_coeff_arr
+        energies = np.array(mo_energy)
+    return coeffs, energies, is_uhf
+
+
+def verify_orbital(label, energy_eh):
+    energy_ev = energy_eh * 27.2114
+    print(f"    {label}: E = {energy_eh:.6f} Eh  ({energy_ev:.4f} eV)")
+
+
+def compute_mo_overlap(mol_d, mo_d, mol_a, mo_a):
+    """
+    Analytical MO overlap via PySCF AO integrals.
+
+    S_MO = C_D @ S_AO[donor_AOs, acceptor_AOs] @ C_A
+
+    Builds a dimer molecule from the donor and acceptor atom lists,
+    computes the full AO overlap matrix, extracts the cross-fragment
+    block, and projects onto the MO coefficient vectors.
+    """
+    donor_atoms    = [(mol_d.atom_symbol(i), *mol_d.atom_coord(i))
+                      for i in range(mol_d.natm)]
+    acceptor_atoms = [(mol_a.atom_symbol(i), *mol_a.atom_coord(i))
+                      for i in range(mol_a.natm)]
+
+    mol_dimer        = gto.Mole()
+    mol_dimer.atom   = donor_atoms + acceptor_atoms
+    mol_dimer.basis  = BASIS
+    mol_dimer.verbose = 0
+    mol_dimer.unit   = "Bohr"
+    mol_dimer.build()
+
+    S_ao  = mol_dimer.intor("int1e_ovlp")
+    nao_d = mol_d.nao
+    S_da  = S_ao[:nao_d, nao_d:]       # cross-fragment block
+    S_mo  = mo_d @ S_da @ mo_a
+    return S_mo
+
+
+
+# ------------------------------------------------------------
+# VISUALISATION — side-by-side dimer panels
+# ------------------------------------------------------------
+
+def visualise_mos(mol_donor, pi_D, pistar_D,
+                  mol_acceptor, pi_A, pistar_A,
+                  S_pi, S_pistar, V_DET,
+                  output_html, isoval=0.03, nx=50, ny=50, nz=50):
+    """
+    Two-panel dimer visualisation — each panel shows BOTH molecules
+    together so orbital overlap at the interface is visible.
+      Left panel:  pi_D  (ZnP, blue) + pi_A  (PMI, red)
+      Right panel: pi*_D (ZnP, blue) + pi*_A (PMI, red)
+    """
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+    from skimage.measure import marching_cubes
+
+    def eval_mo(mol, mo_vec):
+        coords = mol.atom_coords() * 0.529177
+        xmin, xmax = coords[:,0].min()-3, coords[:,0].max()+3
+        ymin, ymax = coords[:,1].min()-3, coords[:,1].max()+3
+        zmin, zmax = coords[:,2].min()-3, coords[:,2].max()+3
+        x = np.linspace(xmin, xmax, nx)
+        y = np.linspace(ymin, ymax, ny)
+        z = np.linspace(zmin, zmax, nz)
+        xx, yy, zz = np.meshgrid(x, y, z, indexing="ij")
+        pts = np.column_stack([xx.ravel()/0.529177,
+                               yy.ravel()/0.529177,
+                               zz.ravel()/0.529177])
+        ao_vals = mol.eval_gto("GTOval", pts)
+        mo_vals = ao_vals @ mo_vec
+        return x, y, z, mo_vals.reshape(nx, ny, nz)
+
+    def make_mesh(x, y, z, field, level, color, opacity, name):
+        try:
+            verts, faces, _, _ = marching_cubes(
+                field, level=level,
+                spacing=(x[1]-x[0], y[1]-y[0], z[1]-z[0])
+            )
+            verts[:,0] += x[0]; verts[:,1] += y[0]; verts[:,2] += z[0]
+            return go.Mesh3d(
+                x=verts[:,0], y=verts[:,1], z=verts[:,2],
+                i=faces[:,0], j=faces[:,1], k=faces[:,2],
+                color=color, opacity=opacity, name=name,
+                showscale=False,
+                lighting=dict(ambient=0.6, diffuse=0.8, specular=0.2),
+            )
+        except Exception:
+            return None
+
+    def add_skeleton(fig, mol, row, col):
+        ELEM_COLOR = {"C":"#888888","H":"#cccccc","N":"#4499ff",
+                      "O":"#ff4444","Zn":"#bb44ff"}
+        ELEM_SIZE  = {"C":4,"H":2,"N":5,"O":5,"Zn":8}
+        coords  = mol.atom_coords() * 0.529177
+        symbols = [mol.atom_symbol(i) for i in range(mol.natm)]
+        fig.add_trace(go.Scatter3d(
+            x=coords[:,0], y=coords[:,1], z=coords[:,2],
+            mode="markers",
+            marker=dict(size=[ELEM_SIZE.get(s,4) for s in symbols],
+                        color=[ELEM_COLOR.get(s,"gray") for s in symbols],
+                        opacity=0.85),
+            showlegend=False,
+        ), row=row, col=col)
+        for i in range(mol.natm):
+            for j in range(i+1, mol.natm):
+                d = np.linalg.norm(coords[i]-coords[j])
+                if d < 1.8:
+                    fig.add_trace(go.Scatter3d(
+                        x=[coords[i,0],coords[j,0]],
+                        y=[coords[i,1],coords[j,1]],
+                        z=[coords[i,2],coords[j,2]],
+                        mode="lines",
+                        line=dict(color="#444444", width=2),
+                        showlegend=False,
+                    ), row=row, col=col)
+
+    # Evaluate all four MOs on their respective molecular grids
+    print("  Computing grids (this may take a moment)...")
+    print("    pi_D   (ZnP SOMO-1)...")
+    xd, yd, zd, fld_pi_D     = eval_mo(mol_donor,    pi_D)
+    print("    pi*_D  (ZnP SOMO)...")
+    _,  _,  _,  fld_pistar_D  = eval_mo(mol_donor,    pistar_D)
+    print("    pi_A   (PMI SOMO-1)...")
+    xa, ya, za, fld_pi_A     = eval_mo(mol_acceptor, pi_A)
+    print("    pi*_A  (PMI SOMO)...")
+    _,  _,  _,  fld_pistar_A  = eval_mo(mol_acceptor, pistar_A)
+
+    panels = [
+        (fld_pi_D,    xd, yd, zd, fld_pi_A,    xa, ya, za,
+         f"pi_D | pi_A     S = {S_pi:.3e}"),
+        (fld_pistar_D, xd, yd, zd, fld_pistar_A, xa, ya, za,
+         f"pi*_D | pi*_A   S = {S_pistar:.3e}"),
+    ]
+
+    fig = make_subplots(
+        rows=1, cols=2,
+        specs=[[{"type":"scene"},{"type":"scene"}]],
+        horizontal_spacing=0.03,
+    )
+
+    for col, (fd, xfd, yfd, zfd, fa, xfa, yfa, zfa, title) in             enumerate(panels, start=1):
+
+        # ZnP MO — blue (+) / cyan (-)
+        for iso, clr, nm in [(isoval,'#1a6bcc','ZnP +'),
+                              (-isoval,'#55ccff','ZnP -')]:
+            t = make_mesh(xfd, yfd, zfd, fd, iso, clr, 0.6, nm)
+            if t: fig.add_trace(t, row=1, col=col)
+
+        # PMI MO — red (+) / orange (-)
+        for iso, clr, nm in [(isoval,'#cc2200','PMI +'),
+                              (-isoval,'#ff8800','PMI -')]:
+            t = make_mesh(xfa, yfa, zfa, fa, iso, clr, 0.6, nm)
+            if t: fig.add_trace(t, row=1, col=col)
+
+        # Both molecule skeletons in same scene
+        add_skeleton(fig, mol_donor,    row=1, col=col)
+        add_skeleton(fig, mol_acceptor, row=1, col=col)
+
+    scene_style = dict(
+        bgcolor="#111122",
+        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False, title=""),
+        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False, title=""),
+        zaxis=dict(showgrid=False, zeroline=False, showticklabels=False, title=""),
+    )
+    fig.update_layout(scene=scene_style, scene2=scene_style)
+
+    annotations = [
+        dict(text=panels[0][8], x=0.25, y=1.02, xref="paper", yref="paper",
+             showarrow=False, xanchor="center",
+             font=dict(size=12, color="white", family="monospace")),
+        dict(text=panels[1][8], x=0.75, y=1.02, xref="paper", yref="paper",
+             showarrow=False, xanchor="center",
+             font=dict(size=12, color="white", family="monospace")),
+    ]
+
+    fig.update_layout(
+        annotations=annotations,
+        title=dict(
+            text=(f"ZnP/PMI Mode A (molden) — {EDGE_TO_EDGE_DIST} Å anchor-to-anchor  |  "
+                  f"Blue=ZnP  Red=PMI  isoval=±{isoval}  V_DET={V_DET:.3e}"),
+            font=dict(size=12, color="white", family="monospace"),
+            x=0.5, xanchor="center",
+        ),
+        height=700, width=1300,
+        paper_bgcolor="#111122",
+        font=dict(color="white", family="monospace"),
+    )
+
+    fig.write_html(output_html)
+    print(f"  Saved: {output_html}")
+
+    import subprocess
+    gcs_dest = f"gs://orca_bucket/angel/{output_html.split('/')[-1]}"
+    result = subprocess.run(
+        ["gsutil", "-m", "cp", "-r", output_html, gcs_dest],
+        capture_output=True, text=True
+    )
+    if result.returncode == 0:
+        print(f"  Uploaded: {gcs_dest}")
+    else:
+        print(f"  WARNING: upload failed — {result.stderr.strip()}")
+
+# ------------------------------------------------------------
+# MAIN
+# ------------------------------------------------------------
+
+def main():
+    print("=" * 60)
+    print("ZnP/PMI DET Coupling — Mode A, x=0 (molden)")
+    print(f"Edge-to-edge: {EDGE_TO_EDGE_DIST:.1f} Å anchor-to-anchor")
+    print("=" * 60)
+
+    # --- Read geometries ---
+    print("\nReading xyz files...")
+    znp_atoms_raw = read_xyz(DONOR_XYZ)
+    pmi_atoms_raw = read_xyz(ACCEPTOR_XYZ)
+    print(f"  ZnP: {len(znp_atoms_raw)} atoms")
+    print(f"  PMI: {len(pmi_atoms_raw)} atoms")
+
+    # --- Place PMI at target geometry relative to ZnP ---
+    # PMI anchor atom should be at: ZnP anchor + EDGE_TO_EDGE_DIST along X
+    # and coplanar in Y and Z with ZnP anchor
+    target = np.array([
+        ZNP_ANCHOR[0] + EDGE_TO_EDGE_DIST,
+        ZNP_ANCHOR[1],
+        ZNP_ANCHOR[2],
+    ])
+    shift = target - PMI_ANCHOR
+    dx, dy, dz = shift
+
+    print(f"\nPlacing PMI at anchor-to-anchor distance {EDGE_TO_EDGE_DIST:.1f} Å...")
+    print(f"  ZnP anchor:    ({ZNP_ANCHOR[0]:.3f}, {ZNP_ANCHOR[1]:.3f}, {ZNP_ANCHOR[2]:.3f}) Å")
+    print(f"  PMI anchor:    ({PMI_ANCHOR[0]:.3f}, {PMI_ANCHOR[1]:.3f}, {PMI_ANCHOR[2]:.3f}) Å")
+    print(f"  Target pos:    ({target[0]:.3f}, {target[1]:.3f}, {target[2]:.3f}) Å")
+    print(f"  Shift applied: dX={dx:.4f}  dY={dy:.4f}  dZ={dz:.4f} Å")
+
+    znp_atoms = znp_atoms_raw                          # ZnP stays fixed
+    pmi_atoms = shift_atoms(pmi_atoms_raw, dx, dy, dz) # PMI shifted
+
+    # Verify anchor positions after shift
+    pmi_anchor_new = np.array(pmi_atoms[6][1:])  # index 6 = atom 7 (1-based)
+    dist_actual = np.linalg.norm(np.array(znp_atoms[71][1:]) - pmi_anchor_new)
+    print(f"  Anchor distance after shift: {dist_actual:.4f} Å")
+
+    # --- Build PySCF molecules ---
+    print("\nBuilding PySCF molecules...")
+    mol_donor    = build_mol(znp_atoms, BASIS, charge=0, spin=2)
+    mol_acceptor = build_mol(pmi_atoms, BASIS, charge=0, spin=2)
+    print(f"  ZnP: {mol_donor.nao} AOs")
+    print(f"  PMI: {mol_acceptor.nao} AOs")
+
+    # --- Load MO coefficients ---
+    print("\nLoading MO coefficients from molden files...")
+    mo_coeffs_d, mo_energy_d, is_uhf_d = load_molden_alpha(DONOR_MOLDEN)
+    mo_coeffs_a, mo_energy_a, is_uhf_a = load_molden_alpha(ACCEPTOR_MOLDEN)
+    print(f"  ZnP: {mo_coeffs_d.shape}  UHF={is_uhf_d}")
+    print(f"  PMI: {mo_coeffs_a.shape}  UHF={is_uhf_a}")
+
+    # --- Verify orbital indices ---
+    print("\nVerifying orbital indices...")
+    print("  ZnP (donor):")
+    verify_orbital("pi_D   (SOMO-1, idx 174)", mo_energy_d[DONOR_PI_IDX])
+    verify_orbital("pi*_D  (SOMO,   idx 175)", mo_energy_d[DONOR_PISTAR_IDX])
+    print("  PMI (acceptor):")
+    verify_orbital("pi_A   (SOMO-1, idx 194)", mo_energy_a[ACCEPT_PI_IDX])
+    verify_orbital("pi*_A  (SOMO,   idx 195)", mo_energy_a[ACCEPT_PISTAR_IDX])
+
+    # --- Extract MO vectors ---
+    pi_D     = mo_coeffs_d[:, DONOR_PI_IDX]
+    pistar_D = mo_coeffs_d[:, DONOR_PISTAR_IDX]
+    pi_A     = mo_coeffs_a[:, ACCEPT_PI_IDX]
+    pistar_A = mo_coeffs_a[:, ACCEPT_PISTAR_IDX]
+
+    # --- Compute overlaps ---
+    print("\nComputing overlap integrals (analytical AO basis)...")
+    S_pi     = compute_mo_overlap(mol_donor, pi_D,     mol_acceptor, pi_A)
+    S_pistar = compute_mo_overlap(mol_donor, pistar_D,  mol_acceptor, pistar_A)
+    V_DET    = S_pi * S_pistar
+
+    # --- Results ---
+    print("\n" + "=" * 60)
+    print(f"RESULTS — ZnP/PMI Mode A (molden), {EDGE_TO_EDGE_DIST:.1f} Å")
+    print("=" * 60)
+    print(f"\n  S(pi_D,  pi_A)   = {S_pi:.6e}")
+    print(f"  S(pi*_D, pi*_A)  = {S_pistar:.6e}")
+    print(f"  V_DET            = {V_DET:.6e}")
+    print(f"\n  Note: V_DET = kappa x S_pi x S_pi*")
+    print(f"        kappa for ZnP/PMI not yet determined")
+    print("=" * 60)
+
+    # --- Visualisation ---
+    output_html = f"{BASE_DIR}/mo_visualisation_modeA_molden.html"
+    print(f"\nGenerating MO visualisation...")
+    visualise_mos(mol_donor, pi_D, pistar_D,
+                  mol_acceptor, pi_A, pistar_A,
+                  S_pi=S_pi, S_pistar=S_pistar, V_DET=V_DET,
+                  output_html=output_html)
+
+
+if __name__ == "__main__":
+    main()
