@@ -1,0 +1,490 @@
+#!/usr/bin/env python3
+"""
+Compute Dexter Energy Transfer (DET) orbital overlaps for ZnP/PMI at x=0.
+
+Mode A: separate molecule calculations, cube file overlaps.
+Donor:    ZnP  T1 SP -> SOMO-1 = pi_D,  SOMO = pi*_D
+Acceptor: PMI  T1 SP -> SOMO-1 = pi_A,  SOMO = pi*_A
+
+Visualisation: 2D contour plot (XY projection, max along Z).
+  Left panel:  pi_D (ZnP) + pi_A  (PMI)  — shows S(pi_D, pi_A)
+  Right panel: pi*_D(ZnP) + pi*_A (PMI)  — shows S(pi*_D, pi*_A)
+  Contours at ±0.02, ±0.03, ±0.04, ±0.05 a.u.
+
+Outputs:
+    - Terminal: overlap integrals and V_DET
+    - PNG:      2D contour plot saved to OUTPUT_PNG
+"""
+
+import numpy as np
+from scipy.interpolate import RegularGridInterpolator
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
+
+# ------------------------------------------------------------
+# CUBE FILE PATHS
+# ------------------------------------------------------------
+CUBE_PI_D     = "/nfs/outputs/dexter_cal/ZnP-PMI/znp_cam-b3lyp_def2-TZVP_t1_sp.mo174a.cube"
+CUBE_PISTAR_D = "/nfs/outputs/dexter_cal/ZnP-PMI/znp_cam-b3lyp_def2-TZVP_t1_sp.mo175a.cube"
+CUBE_PI_A     = "/nfs/outputs/dexter_cal/ZnP-PMI/PMI_cam-b3lyp_def2-TZVP_s0_opt_t1_sp.mo194a.cube"
+CUBE_PISTAR_A = "/nfs/outputs/dexter_cal/ZnP-PMI/PMI_cam-b3lyp_def2-TZVP_s0_opt_t1_sp.mo195a.cube"
+
+# ------------------------------------------------------------
+# GEOMETRY PARAMETERS
+# ------------------------------------------------------------
+EDGE_TO_EDGE_DIST = 2.0
+ISOVALUES         = [0.02, 0.03, 0.04, 0.05]
+OUTPUT_PNG        = "/nfs/outputs/dexter_cal/ZnP-PMI/mo_contour_modeA.png"
+
+ZNP_ANCHOR = np.array([15.6442,  0.5321, -10.0939])
+PMI_ANCHOR = np.array([-3.9594, -0.8593,  -1.1577])
+
+
+# ------------------------------------------------------------
+# CUBE FILE READER
+# ------------------------------------------------------------
+
+def read_cube(filepath):
+    with open(filepath) as f:
+        lines = f.readlines()
+    natoms = abs(int(lines[2].split()[0]))
+    origin = np.array([float(x) for x in lines[2].split()[1:4]]) * 0.529177
+    npts = np.zeros(3, dtype=int)
+    axes = np.zeros((3, 3))
+    for i in range(3):
+        p = lines[3+i].split()
+        npts[i]   = int(p[0])
+        axes[i,:] = [float(x) * 0.529177 for x in p[1:4]]
+    expected = npts[0] * npts[1] * npts[2]
+    vals = []
+    for line in lines[6+natoms:]:
+        parts = line.split()
+        if not parts:
+            continue
+        if len(parts) <= 2:
+            try:
+                [int(x) for x in parts]
+                continue
+            except ValueError:
+                pass
+        vals.extend([float(x) for x in parts])
+    field = np.array(vals[:expected]).reshape(npts[0], npts[1], npts[2])
+    return origin, axes, npts, field
+
+
+def get_grid_coords(origin, axes, npts):
+    x = origin[0] + np.arange(npts[0]) * axes[0, 0]
+    y = origin[1] + np.arange(npts[1]) * axes[1, 1]
+    z = origin[2] + np.arange(npts[2]) * axes[2, 2]
+    return x, y, z
+
+
+def voxel_volume(axes):
+    return abs(np.dot(axes[0], np.cross(axes[1], axes[2])))
+
+
+def expand_grid(field, x, y, z, axes, pad_ang=5.0):
+    """
+    Zero-pad field so the grid extends at least pad_ang Å beyond its current
+    edges in every direction.  Returns the padded field and new x, y, z arrays.
+    Only pads in positive/negative directions as needed.
+    """
+    dx = abs(axes[0, 0]);  dy = abs(axes[1, 1]);  dz = abs(axes[2, 2])
+    nx_pad = int(np.ceil(pad_ang / dx))
+    ny_pad = int(np.ceil(pad_ang / dy))
+    nz_pad = int(np.ceil(pad_ang / dz))
+
+    field_padded = np.pad(field,
+                          ((nx_pad, nx_pad), (ny_pad, ny_pad), (nz_pad, nz_pad)),
+                          mode='constant', constant_values=0.0)
+    x_new = np.concatenate([x[0] - np.arange(nx_pad, 0, -1) * dx,
+                             x,
+                             x[-1] + np.arange(1, nx_pad + 1) * dx])
+    y_new = np.concatenate([y[0] - np.arange(ny_pad, 0, -1) * dy,
+                             y,
+                             y[-1] + np.arange(1, ny_pad + 1) * dy])
+    z_new = np.concatenate([z[0] - np.arange(nz_pad, 0, -1) * dz,
+                             z,
+                             z[-1] + np.arange(1, nz_pad + 1) * dz])
+    return field_padded, x_new, y_new, z_new
+
+
+def get_mol_coords_from_cube(filepath):
+    ELEM_NUM = {1: 'H', 6: 'C', 7: 'N', 8: 'O', 30: 'Zn'}
+    with open(filepath) as f:
+        lines = f.readlines()
+    natoms = abs(int(lines[2].split()[0]))
+    coords, elems = [], []
+    for line in lines[6:6+natoms]:
+        parts = line.split()
+        if len(parts) < 5:
+            continue
+        elem = ELEM_NUM.get(int(parts[0]), 'X')
+        coords.append([float(parts[2]) * 0.529177,
+                       float(parts[3]) * 0.529177,
+                       float(parts[4]) * 0.529177])
+        elems.append(elem)
+    return np.array(coords), elems
+
+
+def shift_and_interpolate(field_a, x_a, y_a, z_a, x_d, y_d, z_d, target_dist):
+    target = np.array([ZNP_ANCHOR[0] + target_dist,
+                       ZNP_ANCHOR[1], ZNP_ANCHOR[2]])
+    dx = target[0] - PMI_ANCHOR[0]
+    dy = target[1] - PMI_ANCHOR[1]
+    dz = target[2] - PMI_ANCHOR[2]
+    interp = RegularGridInterpolator(
+        (x_a + dx, y_a + dy, z_a + dz), field_a,
+        method='linear', bounds_error=False, fill_value=0.0
+    )
+    X, Y, Z = np.meshgrid(x_d, y_d, z_d, indexing='ij')
+    pts = np.stack([X.ravel(), Y.ravel(), Z.ravel()], axis=-1)
+    return interp(pts).reshape(len(x_d), len(y_d), len(z_d)), dx, dy, dz
+
+
+def normalisation(field, dV):
+    return np.sum(field**2) * dV
+
+
+def compute_overlap(field_d, field_a, dV):
+    return np.sum(field_d * field_a) * dV
+
+
+# ------------------------------------------------------------
+# PROJECTION: max-abs along Z for sign-preserving 2D slice
+# ------------------------------------------------------------
+
+def project_maxabs(field):
+    """
+    Return a 2D (nx, ny) array: at each (i,j) take the value along z
+    with the largest absolute magnitude, preserving its sign.
+    This keeps both lobes visible and avoids cancellation from summing.
+    """
+    idx = np.argmax(np.abs(field), axis=2)
+    nx, ny = field.shape[:2]
+    ii, jj = np.meshgrid(np.arange(nx), np.arange(ny), indexing='ij')
+    return field[ii, jj, idx]
+
+
+# ------------------------------------------------------------
+# 2D CONTOUR VISUALISATION
+# ------------------------------------------------------------
+
+def draw_skeleton_2d(ax, coords, elems, dx=0., dy=0.):
+    """Overlay atom positions and bonds projected onto XY plane."""
+    ELEM_COLOR = {"C": "#aaaaaa", "H": "#dddddd", "N": "#6699ff",
+                  "O": "#ff6666", "Zn": "#cc88ff"}
+    ELEM_SIZE  = {"C": 18, "H": 8,  "N": 22, "O": 22, "Zn": 35}
+    shifted = coords + np.array([dx, dy, 0.])
+    # bonds
+    for i in range(len(shifted)):
+        for j in range(i+1, len(shifted)):
+            if np.linalg.norm(shifted[i] - shifted[j]) < 1.8:
+                ax.plot([shifted[i, 0], shifted[j, 0]],
+                        [shifted[i, 1], shifted[j, 1]],
+                        color="#555555", lw=0.8, zorder=2)
+    # atoms
+    for k, (elem, pos) in enumerate(zip(elems, shifted)):
+        ax.scatter(pos[0], pos[1],
+                   s=ELEM_SIZE.get(elem, 18),
+                   color=ELEM_COLOR.get(elem, "gray"),
+                   zorder=3, linewidths=0)
+
+
+# Shared style constants
+LEVEL_COLORS     = ["#f0e442", "#56b4e9", "#e69f00", "#cc79a7"]
+LEVEL_COLORS_NEG = list(reversed(LEVEL_COLORS))
+LW_ZNP = 1.4
+LW_PMI = 0.9
+
+
+def _style_ax(ax, title=None, isovalue_label=None):
+    """Apply common dark-theme axis styling."""
+    ax.set_facecolor("#0d0d1a")
+    ax.set_xlabel("x  (Å)", color='#aaaaaa', fontsize=7)
+    ax.set_ylabel("y  (Å)", color='#aaaaaa', fontsize=7)
+    ax.tick_params(colors='#888888', labelsize=6)
+    for spine in ax.spines.values():
+        spine.set_edgecolor('#444466')
+    ax.xaxis.set_major_locator(ticker.MultipleLocator(5))
+    ax.yaxis.set_major_locator(ticker.MultipleLocator(5))
+    ax.set_aspect('equal')
+    if title:
+        ax.set_title(title, color='white', fontsize=9, pad=6,
+                     fontfamily='monospace')
+    if isovalue_label:
+        ax.text(0.02, 0.97, isovalue_label,
+                transform=ax.transAxes, color='white',
+                fontsize=7, fontfamily='monospace',
+                va='top', ha='left')
+
+
+def _draw_one_isovalue(ax, X, Y, proj_d, proj_a, lv_pos, clr_pos, clr_neg):
+    """Draw filled + line contours for a single isovalue on ax."""
+    lv_neg = -lv_pos
+    for proj in (proj_d, proj_a):
+        ax.contourf(X, Y, proj, levels=[lv_pos, lv_pos + 0.1],
+                    colors=[clr_pos], alpha=0.25, zorder=4)
+        ax.contourf(X, Y, proj, levels=[lv_neg - 0.1, lv_neg],
+                    colors=[clr_neg], alpha=0.25, zorder=4)
+    ax.contour(X, Y, proj_d, levels=[lv_pos], colors=[clr_pos],
+               linewidths=LW_ZNP, linestyles='solid', zorder=5)
+    ax.contour(X, Y, proj_a, levels=[lv_pos], colors=[clr_pos],
+               linewidths=LW_PMI, linestyles='solid', zorder=5)
+    ax.contour(X, Y, proj_d, levels=[lv_neg], colors=[clr_neg],
+               linewidths=LW_ZNP, linestyles='dashed', zorder=5)
+    ax.contour(X, Y, proj_a, levels=[lv_neg], colors=[clr_neg],
+               linewidths=LW_PMI, linestyles='dashed', zorder=5)
+
+
+def _save_and_upload(fig, output_png):
+    """Save figure to disk and upload to GCS."""
+    import subprocess
+    plt.tight_layout(rect=[0, 0, 1, 1], h_pad=3.0, w_pad=2.0)
+    fig.savefig(output_png, dpi=200, bbox_inches='tight',
+                facecolor=fig.get_facecolor())
+    print(f"  Saved: {output_png}")
+    plt.close(fig)
+    gcs_dest = f"gs://orca_bucket/angel/{output_png.split('/')[-1]}"
+    result = subprocess.run(
+        ["gsutil", "-m", "cp", "-r", output_png, gcs_dest],
+        capture_output=True, text=True
+    )
+    if result.returncode == 0:
+        print(f"  Uploaded to: {gcs_dest}")
+    else:
+        print(f"  WARNING: GCS upload failed — {result.stderr.strip()}")
+
+
+def visualise_contour_separate(fields_d, fields_a_shifted,
+                               x_d, y_d,
+                               coords_d, elems_d,
+                               coords_a, elems_a,
+                               dx, dy, output_png,
+                               S_pi=None, S_pistar=None, V_DET=None):
+    """4 rows x 2 cols — one row per isovalue."""
+    from matplotlib.lines import Line2D
+
+    LEVELS_POS = ISOVALUES
+    X, Y = np.meshgrid(x_d, y_d, indexing='ij')
+    vdet_str = f"$V_{{DET}}$ = {V_DET:.3e}" if V_DET is not None else ""
+
+    pi_title    = (f"$\\pi_D$ (ZnP) | $\\pi_A$ (PMI)   S = {S_pi:.3e}"
+                   if S_pi is not None else "$\\pi_D$ (ZnP) | $\\pi_A$ (PMI)")
+    pistar_title = (f"$\\pi^*_D$ (ZnP) | $\\pi^*_A$ (PMI)   S = {S_pistar:.3e}"
+                    if S_pistar is not None else "$\\pi^*_D$ (ZnP) | $\\pi^*_A$ (PMI)")
+
+    proj_d0 = project_maxabs(fields_d[0])
+    proj_d1 = project_maxabs(fields_d[1])
+    proj_a0 = project_maxabs(fields_a_shifted[0])
+    proj_a1 = project_maxabs(fields_a_shifted[1])
+
+    fig, axes = plt.subplots(4, 2, figsize=(16, 22), facecolor="#0d0d1a")
+    fig.patch.set_facecolor("#0d0d1a")
+
+    for row, (lv_pos, clr_pos, clr_neg) in enumerate(
+            zip(LEVELS_POS, LEVEL_COLORS, list(reversed(LEVEL_COLORS_NEG)))):
+
+        for col, (proj_d, proj_a, mo_title) in enumerate([
+            (proj_d0, proj_a0, pi_title),
+            (proj_d1, proj_a1, pistar_title),
+        ]):
+            ax = axes[row, col]
+            _draw_one_isovalue(ax, X, Y, proj_d, proj_a, lv_pos, clr_pos, clr_neg)
+            draw_skeleton_2d(ax, coords_d, elems_d)
+            draw_skeleton_2d(ax, coords_a, elems_a, dx=dx, dy=dy)
+            _style_ax(ax,
+                      title=mo_title if row == 0 else None,
+                      isovalue_label=f"isovalue = ±{lv_pos}")
+            ax.legend(handles=[
+                Line2D([0], [0], color=clr_pos, lw=1.4, linestyle='solid',
+                       label=f"+{lv_pos}  solid"),
+                Line2D([0], [0], color=clr_neg, lw=1.4, linestyle='dashed',
+                       label=f"−{lv_pos}  dashed"),
+            ], fontsize=6, loc='upper right',
+               facecolor='#1a1a2e', edgecolor='#444466',
+               labelcolor='white', framealpha=0.8)
+
+    fig.suptitle(
+        f"ZnP/PMI Mode A — separate isovalues  |  {EDGE_TO_EDGE_DIST} Å Separation  |  {vdet_str}",
+        color='white', fontsize=11, fontfamily='monospace', y=1.002)
+    _save_and_upload(fig, output_png)
+
+
+def visualise_contour_combined(fields_d, fields_a_shifted,
+                               x_d, y_d,
+                               coords_d, elems_d,
+                               coords_a, elems_a,
+                               dx, dy, output_png,
+                               S_pi=None, S_pistar=None, V_DET=None):
+    """1 row x 2 cols — all isovalues overlaid on each panel."""
+    from matplotlib.lines import Line2D
+
+    LEVELS_POS = ISOVALUES
+    X, Y = np.meshgrid(x_d, y_d, indexing='ij')
+    vdet_str = f"$V_{{DET}}$ = {V_DET:.3e}" if V_DET is not None else ""
+
+    pi_title    = (f"$\\pi_D$ (ZnP) | $\\pi_A$ (PMI)   S = {S_pi:.3e}"
+                   if S_pi is not None else "$\\pi_D$ (ZnP) | $\\pi_A$ (PMI)")
+    pistar_title = (f"$\\pi^*_D$ (ZnP) | $\\pi^*_A$ (PMI)   S = {S_pistar:.3e}"
+                    if S_pistar is not None else "$\\pi^*_D$ (ZnP) | $\\pi^*_A$ (PMI)")
+
+    proj_d0 = project_maxabs(fields_d[0])
+    proj_d1 = project_maxabs(fields_d[1])
+    proj_a0 = project_maxabs(fields_a_shifted[0])
+    proj_a1 = project_maxabs(fields_a_shifted[1])
+
+    fig, axes = plt.subplots(1, 2, figsize=(16, 7), facecolor="#0d0d1a")
+    fig.patch.set_facecolor("#0d0d1a")
+
+    for ax, proj_d, proj_a, mo_title in [
+        (axes[0], proj_d0, proj_a0, pi_title),
+        (axes[1], proj_d1, proj_a1, pistar_title),
+    ]:
+        for lv_pos, clr_pos, clr_neg in zip(
+                LEVELS_POS, LEVEL_COLORS, list(reversed(LEVEL_COLORS_NEG))):
+            _draw_one_isovalue(ax, X, Y, proj_d, proj_a, lv_pos, clr_pos, clr_neg)
+
+        draw_skeleton_2d(ax, coords_d, elems_d)
+        draw_skeleton_2d(ax, coords_a, elems_a, dx=dx, dy=dy)
+        _style_ax(ax, title=mo_title)
+
+        # legend: one entry per isovalue
+        legend_handles = []
+        for lv_pos, clr_pos, clr_neg in zip(
+                LEVELS_POS, LEVEL_COLORS, list(reversed(LEVEL_COLORS_NEG))):
+            legend_handles += [
+                Line2D([0], [0], color=clr_pos, lw=1.4, linestyle='solid',
+                       label=f"+{lv_pos}"),
+                Line2D([0], [0], color=clr_neg, lw=1.4, linestyle='dashed',
+                       label=f"−{lv_pos}"),
+            ]
+        legend_handles.append(
+            Line2D([0], [0], color='white', lw=0))
+        ax.legend(handles=legend_handles, fontsize=6, loc='upper right',
+                  facecolor='#1a1a2e', edgecolor='#444466',
+                  labelcolor='white', framealpha=0.8)
+
+    fig.suptitle(
+        f"ZnP/PMI Mode A — combined isovalues  |  {EDGE_TO_EDGE_DIST} Å Separation  |  {vdet_str}",
+        color='white', fontsize=11, fontfamily='monospace', y=1.01)
+    _save_and_upload(fig, output_png)
+
+
+# ------------------------------------------------------------
+# MAIN
+# ------------------------------------------------------------
+
+def main():
+    print("=" * 60)
+    print(f"ZnP/PMI DET — Mode A cube, {EDGE_TO_EDGE_DIST} Å anchor-to-anchor")
+    print("=" * 60)
+
+    print("\nReading cube files...")
+    origin_d, axes_d, npts_d, field_pi_D     = read_cube(CUBE_PI_D)
+    _,        _,      _,      field_pistar_D  = read_cube(CUBE_PISTAR_D)
+    origin_a, axes_a, npts_a, field_pi_A     = read_cube(CUBE_PI_A)
+    _,        _,      _,      field_pistar_A  = read_cube(CUBE_PISTAR_A)
+    print(f"  ZnP grid: {npts_d[0]}x{npts_d[1]}x{npts_d[2]}")
+    print(f"  PMI grid: {npts_a[0]}x{npts_a[1]}x{npts_a[2]}")
+
+    x_d, y_d, z_d = get_grid_coords(origin_d, axes_d, npts_d)
+    x_a, y_a, z_a = get_grid_coords(origin_a, axes_a, npts_a)
+    dV_d = voxel_volume(axes_d)
+
+    print("\nReading atom coords from cube headers...")
+    coords_d, elems_d = get_mol_coords_from_cube(CUBE_PI_D)
+    coords_a, elems_a = get_mol_coords_from_cube(CUBE_PI_A)
+    print(f"  ZnP anchor: ({ZNP_ANCHOR[0]:.3f}, {ZNP_ANCHOR[1]:.3f}, {ZNP_ANCHOR[2]:.3f}) Å")
+    print(f"  PMI anchor: ({PMI_ANCHOR[0]:.3f}, {PMI_ANCHOR[1]:.3f}, {PMI_ANCHOR[2]:.3f}) Å")
+
+    print("\nNormalisation check (should be ~1.0):")
+    dV_a = voxel_volume(axes_a)
+    norm_pi_D     = normalisation(field_pi_D,    dV_d)
+    norm_pistar_D = normalisation(field_pistar_D, dV_d)
+    norm_pi_A     = normalisation(field_pi_A,    dV_a)
+    norm_pistar_A = normalisation(field_pistar_A, dV_a)
+    for label, n in [("pi_D",    norm_pi_D),
+                     ("pi*_D",   norm_pistar_D),
+                     ("pi_A",    norm_pi_A),
+                     ("pi*_A",   norm_pistar_A)]:
+        print(f"  ∫|{label}|² dV = {n:.4f}")
+
+    c_pi_D     = 1.0 / np.sqrt(norm_pi_D)     if norm_pi_D     > 0 else 1.0
+    c_pistar_D = 1.0 / np.sqrt(norm_pistar_D)  if norm_pistar_D > 0 else 1.0
+    c_pi_A     = 1.0 / np.sqrt(norm_pi_A)     if norm_pi_A     > 0 else 1.0
+    c_pistar_A = 1.0 / np.sqrt(norm_pistar_A)  if norm_pistar_A > 0 else 1.0
+
+    print(f"\nExpanding ZnP grid to cover shifted PMI extent...")
+    PAD = 15.0  # Å — PMI extends ~11 Å beyond ZnP grid right edge
+    field_pi_D,    x_d, y_d, z_d = expand_grid(field_pi_D,    x_d, y_d, z_d, axes_d, PAD)
+    # expand pistar_D to the same new grid using the same PAD
+    x_d_orig = origin_d[0] + np.arange(npts_d[0]) * axes_d[0, 0]
+    y_d_orig = origin_d[1] + np.arange(npts_d[1]) * axes_d[1, 1]
+    z_d_orig = origin_d[2] + np.arange(npts_d[2]) * axes_d[2, 2]
+    field_pistar_D, _, _, _ = expand_grid(field_pistar_D, x_d_orig, y_d_orig, z_d_orig, axes_d, PAD)
+    print(f"  Expanded ZnP grid: {len(x_d)}x{len(y_d)}x{len(z_d)}")
+    print(f"  x range: {x_d[0]:.2f} → {x_d[-1]:.2f} Å")
+
+    print(f"\nShifting PMI grid to {EDGE_TO_EDGE_DIST:.1f} Å from ZnP...")
+    print("  Interpolating pi_A...")
+    field_pi_A_on_d, dx, dy, dz = shift_and_interpolate(
+        field_pi_A, x_a, y_a, z_a, x_d, y_d, z_d, EDGE_TO_EDGE_DIST)
+    print(f"    Translation: dX={dx:.4f}  dY={dy:.4f}  dZ={dz:.4f} Å")
+    print("  Interpolating pi*_A...")
+    field_pistar_A_on_d, _, _, _ = shift_and_interpolate(
+        field_pistar_A, x_a, y_a, z_a, x_d, y_d, z_d, EDGE_TO_EDGE_DIST)
+
+    print("\nComputing overlap integrals...")
+    S_pi_raw     = compute_overlap(field_pi_D,    field_pi_A_on_d,     dV_d)
+    S_pistar_raw = compute_overlap(field_pistar_D, field_pistar_A_on_d, dV_d)
+    S_pi_corr     = S_pi_raw     * c_pi_D    * c_pi_A
+    S_pistar_corr = S_pistar_raw * c_pistar_D * c_pistar_A
+    V_DET_raw     = S_pi_raw     * S_pistar_raw
+    V_DET_corr    = S_pi_corr    * S_pistar_corr
+
+    common_kwargs = dict(
+        fields_d=[field_pi_D, field_pistar_D],
+        fields_a_shifted=[field_pi_A_on_d, field_pistar_A_on_d],
+        x_d=x_d, y_d=y_d,
+        coords_d=coords_d, elems_d=elems_d,
+        coords_a=coords_a, elems_a=elems_a,
+        dx=dx, dy=dy,
+        S_pi=S_pi_corr, S_pistar=S_pistar_corr, V_DET=V_DET_corr,
+    )
+
+    print("\nGenerating separate-isovalue contour plot (4x2)...")
+    visualise_contour_separate(
+        output_png=OUTPUT_PNG.replace(".png", "_separate.png"),
+        **common_kwargs,
+    )
+
+    print("\nGenerating combined-isovalue contour plot (1x2)...")
+    visualise_contour_combined(
+        output_png=OUTPUT_PNG.replace(".png", "_combined.png"),
+        **common_kwargs,
+    )
+
+    print("\n" + "=" * 60)
+    print("RESULTS — ZnP/PMI DET at x=0, edge-to-edge 2.0 Å")
+    print("=" * 60)
+    print(f"\n  Raw (no normalisation correction):")
+    print(f"    S(pi_D,  pi_A)   = {S_pi_raw:.6e}")
+    print(f"    S(pi*_D, pi*_A)  = {S_pistar_raw:.6e}")
+    print(f"    V_DET            = {V_DET_raw:.6e}")
+    print(f"\n  Corrected (c² normalisation):")
+    print(f"    S(pi_D,  pi_A)   = {S_pi_corr:.6e}")
+    print(f"    S(pi*_D, pi*_A)  = {S_pistar_corr:.6e}")
+    print(f"    V_DET            = {V_DET_corr:.6e}")
+    print(f"\n  Correction factors:")
+    print(f"    c(pi_D)   = {c_pi_D:.4f}   c(pi*_D)  = {c_pistar_D:.4f}")
+    print(f"    c(pi_A)   = {c_pi_A:.4f}   c(pi*_A)  = {c_pistar_A:.4f}")
+    print(f"\n  Note: V_DET = kappa x S_pi x S_pi*")
+    print(f"        kappa for ZnP/PMI not yet determined")
+    print("=" * 60)
+
+
+if __name__ == "__main__":
+    main()
